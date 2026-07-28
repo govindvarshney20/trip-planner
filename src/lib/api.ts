@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server';
 import { db } from './supabase';
 import { normalizeJoinCode } from './codes';
 import { computeGroupDna, type GroupDna } from './dna';
-import type { Member, Preferences, Trip } from './types';
+import { tallyVotes } from './plans';
+import type { Member, Plan, PlanDay, PlanVoteView, Preferences, Trip } from './types';
 
 /**
  * Shared plumbing for route handlers.
@@ -90,6 +91,79 @@ export async function loadMembers(tripId: string): Promise<Member[]> {
     .eq('removed', false)
     .order('created_at');
   return (data ?? []) as Member[];
+}
+
+/**
+ * Plans plus the vote state this member is entitled to see.
+ *
+ * The blind-voting guarantee is enforced here rather than in the UI. Before
+ * reveal the returned object contains no tally and no other member's ranking,
+ * so it cannot leak through the page payload.
+ */
+export async function loadPlans(
+  tripId: string,
+  memberId: string,
+  revealedAt: string | null,
+): Promise<{ plans: Plan[]; vote: PlanVoteView }> {
+  const [plansRes, membersList, votesRes] = await Promise.all([
+    db().from('plans').select('*').eq('trip_id', tripId).order('seed'),
+    loadMembers(tripId),
+    db().from('plan_votes').select('plan_id, member_id, rank').eq('trip_id', tripId),
+  ]);
+  if (plansRes.error) throw new DatabaseError(plansRes.error.message);
+
+  const planRows = (plansRes.data ?? []) as Omit<Plan, 'days'>[];
+  if (planRows.length === 0) {
+    return {
+      plans: [],
+      vote: { revealed: false, votedCount: 0, totalMembers: membersList.length, myRanking: [] },
+    };
+  }
+
+  const daysRes = await db()
+    .from('plan_days')
+    .select('*')
+    .in('plan_id', planRows.map((p) => p.id))
+    .order('day_index');
+  if (daysRes.error) throw new DatabaseError(daysRes.error.message);
+
+  const days = (daysRes.data ?? []) as PlanDay[];
+  const plans: Plan[] = planRows.map((p) => ({
+    ...p,
+    days: days.filter((d) => d.plan_id === p.id),
+  }));
+
+  const allVotes = (votesRes.data ?? []) as {
+    plan_id: string;
+    member_id: string;
+    rank: number;
+  }[];
+
+  const myRanking = allVotes
+    .filter((v) => v.member_id === memberId)
+    .sort((a, b) => a.rank - b.rank)
+    .map((v) => v.plan_id);
+
+  const votedCount = new Set(allVotes.map((v) => v.member_id)).size;
+  const revealed = !!revealedAt;
+
+  const vote: PlanVoteView = {
+    revealed,
+    votedCount,
+    totalMembers: membersList.length,
+    myRanking,
+  };
+
+  if (revealed) {
+    vote.results = tallyVotes(planRows.map((p) => p.id), allVotes).map((t) => ({
+      planId: t.planId,
+      points: t.points,
+      firsts: t.firsts,
+      noVetoes: t.noVetoes,
+    }));
+  }
+
+  return { plans, vote };
 }
 
 export async function loadDna(tripId: string): Promise<GroupDna> {

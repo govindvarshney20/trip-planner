@@ -49,6 +49,9 @@ export interface Trip {
   currency: string;
   brief: string | null;
   locked: boolean;
+  plans_state: PlansState;
+  plans_claimed_at: string | null;
+  plans_revealed_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -111,6 +114,61 @@ export interface Reaction {
   idea_id: string;
   member_id: string;
   value: ReactionValue;
+}
+
+export type PlansState = 'none' | 'generating' | 'ready' | 'failed';
+
+export interface PlanDay {
+  id: string;
+  plan_id: string;
+  day_index: number;
+  title: string;
+  locality: string | null;
+  summary: string | null;
+  items: {
+    title: string;
+    kind?: 'activity' | 'meal' | 'travel' | 'rest';
+    duration_hours?: number;
+    note?: string;
+  }[];
+  warnings: { level: 'warn' | 'clash'; message: string }[];
+}
+
+export interface Plan {
+  id: string;
+  trip_id: string;
+  label: string;
+  tagline: string;
+  tradeoff: string;
+  cost_estimate: string | null;
+  intensity: 'low' | 'moderate' | 'high' | null;
+  best_for: string | null;
+  sources: Citation[];
+  grounded: boolean;
+  seed: number;
+  created_at: string;
+  days: PlanDay[];
+}
+
+/**
+ * What the client is allowed to know about the vote.
+ *
+ * While voting is blind this carries only the member's own ranking and how many
+ * people have voted -- never who voted for what, and never a tally. Those
+ * fields stay undefined until reveal, so a curious member reading the network
+ * response learns nothing they shouldn't.
+ */
+export interface PlanVoteView {
+  revealed: boolean;
+  votedCount: number;
+  totalMembers: number;
+  myRanking: string[];
+  results?: {
+    planId: string;
+    points: number;
+    firsts: number;
+    noVetoes: boolean;
+  }[];
 }
 
 /** An idea plus the group's aggregate verdict on it. */

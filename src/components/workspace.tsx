@@ -2,16 +2,18 @@
 
 import { useState } from 'react';
 import type { GroupDna } from '@/lib/dna';
-import type { Member, Preferences, ScoredIdea, Trip } from '@/lib/types';
+import type { Member, Plan, PlanVoteView, Preferences, ScoredIdea, Trip } from '@/lib/types';
 import { tripLengthDays } from '@/lib/utils';
 import { DnaPanel } from './dna-panel';
 import { IdeasBoard } from './ideas-board';
+import { PlansPanel } from './plans-panel';
 import { Concierge, type ChatMessage } from './concierge';
 import { InviteBar } from './invite-bar';
 
-type Tab = 'crew' | 'ideas' | 'ask';
+type Tab = 'plans' | 'crew' | 'ideas' | 'ask';
 
 const TABS: { id: Tab; label: string }[] = [
+  { id: 'plans', label: 'Plans' },
   { id: 'crew', label: 'Your group' },
   { id: 'ideas', label: 'Ideas' },
   { id: 'ask', label: 'Ask' },
@@ -26,6 +28,8 @@ export function Workspace({
   myPrefs,
   messages,
   inviteUrl,
+  plans,
+  planVote,
 }: {
   trip: Trip;
   me: Member;
@@ -35,8 +39,14 @@ export function Workspace({
   myPrefs: Preferences | null;
   messages: ChatMessage[];
   inviteUrl: string;
+  plans: Plan[];
+  planVote: PlanVoteView;
 }) {
-  const [tab, setTab] = useState<Tab>(myPrefs ? 'ideas' : 'crew');
+  // Land on Plans until this member has ranked them: reacting to three concrete
+  // trips is a far better first move than facing an empty preferences form.
+  const [tab, setTab] = useState<Tab>(
+    planVote.myRanking.length === 0 ? 'plans' : myPrefs ? 'ideas' : 'crew',
+  );
   const days = tripLengthDays(trip.start_date, trip.end_date);
 
   return (
@@ -95,11 +105,24 @@ export function Workspace({
             {t.id === 'ideas' && ideas.length > 0 && (
               <span className="ml-1.5 text-xs text-ink-500">{ideas.length}</span>
             )}
+            {t.id === 'plans' && planVote.myRanking.length === 0 && plans.length > 0 && (
+              <span className="ml-1.5 inline-block size-1.5 rounded-full bg-glow align-middle" />
+            )}
           </button>
         ))}
       </nav>
 
       <div className="mt-6">
+        {tab === 'plans' && (
+          <PlansPanel
+            code={trip.invite_token}
+            plans={plans}
+            vote={planVote}
+            state={trip.plans_state}
+            me={me}
+            isOwner={me.role === 'owner'}
+          />
+        )}
         {tab === 'crew' && (
           <DnaPanel
             code={trip.invite_token}

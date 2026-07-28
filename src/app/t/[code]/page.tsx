@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation';
 import { headers } from 'next/headers';
 import { db } from '@/lib/supabase';
-import { loadDna, loadMembers, loadTrip } from '@/lib/api';
+import { loadDna, loadMembers, loadPlans, loadTrip } from '@/lib/api';
 import { getCurrentMember } from '@/lib/session';
 import { REACTION_WEIGHT, type Idea, type Preferences, type Reaction, type ScoredIdea } from '@/lib/types';
 import { JoinGate } from '@/components/join-gate';
@@ -31,8 +31,9 @@ export default async function TripPage({ params }: { params: Promise<{ code: str
     );
   }
 
-  const [dna, ideasRes, reactionsRes, prefsRes, messagesRes] = await Promise.all([
+  const [dna, planData, ideasRes, reactionsRes, prefsRes, messagesRes] = await Promise.all([
     loadDna(trip.id),
+    loadPlans(trip.id, member.id, trip.plans_revealed_at),
     db().from('ideas').select('*').eq('trip_id', trip.id).order('created_at', { ascending: false }),
     db().from('reactions').select('*'),
     db().from('preferences').select('*').eq('member_id', member.id).maybeSingle(),
@@ -73,6 +74,8 @@ export default async function TripPage({ params }: { params: Promise<{ code: str
       myPrefs={(prefsRes.data as Preferences) ?? null}
       messages={messagesRes.data ?? []}
       inviteUrl={`${await requestOrigin()}/t/${trip.invite_token}`}
+      plans={planData.plans}
+      planVote={planData.vote}
     />
   );
 }

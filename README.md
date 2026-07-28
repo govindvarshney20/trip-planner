@@ -14,6 +14,7 @@ three — and refuses to hand you an itinerary that can't physically be done.
 |---|---|
 | Create a trip, invite by link or spoken code | ✅ |
 | Join with no signup — name and an avatar | ✅ |
+| **Blueprints** — three auto-generated whole-trip options, blind ranked vote | ✅ |
 | Preference intake + **Group DNA** (agreement, splits, conflicts) | ✅ |
 | AI shortlist suggestions, grounded in Google Search with citations | ✅ |
 | React 🔥 / 👍 / 😐 / ❌, auto-ranked board | ✅ |
@@ -50,8 +51,11 @@ Fill in:
 
 ### 3. Database
 
-Open the Supabase dashboard → **SQL Editor** → **New query**, paste all of
-[`supabase/migrations/0001_init.sql`](supabase/migrations/0001_init.sql), and run it.
+Open the Supabase dashboard → **SQL Editor** → **New query**, then run each
+migration in order:
+
+1. [`supabase/migrations/0001_init.sql`](supabase/migrations/0001_init.sql)
+2. [`supabase/migrations/0002_plans.sql`](supabase/migrations/0002_plans.sql)
 
 ### 4. Run
 
@@ -86,6 +90,32 @@ without losing history — a `user_id` column on `members` and a real RLS policy
 set, with the cookie path kept for legacy members.
 
 ---
+
+## Blueprints and blind voting
+
+The weakest moment in a planning tool is the empty board: it asks people to
+invent ideas from nothing, which is the hardest thing to ask, at the point where
+engagement matters most. People react far better than they generate.
+
+So the moment a trip exists, Wayfare generates **three genuinely different,
+internally coherent plans** from the creator's brief — and the group votes
+between whole trips rather than approving a single proposal. "What kind of trip
+are we taking?" is the question that actually needs answering, and three options
+surface it in one round.
+
+Neutrality is enforced mechanically, not just by asking the model nicely:
+
+| Bias | Defence |
+|---|---|
+| One member's taste shapes the options | Generated from the trip brief only, before any preference is recorded |
+| Bandwagon voting | **Blind** — tallies are withheld server-side until everyone has voted |
+| Position bias | Per-member deterministic shuffle, so "first on the page" isn't the same plan for everyone |
+| Anchoring on one proposal | Three options, each with a stated tradeoff. No strawmen |
+| Loudest voice wins | Ranked Borda count, tie-broken toward the plan nobody ranked last |
+
+The blind-vote guarantee lives in `loadPlans()`, not the UI: before reveal the
+payload contains no tally and no other member's ranking, so it cannot leak
+through the page response.
 
 ## AI notes
 

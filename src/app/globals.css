@@ -1,0 +1,90 @@
+@import 'tailwindcss';
+
+/*
+  Wayfare visual language
+  -----------------------
+  Ink-dark ground, warm amber accent, a serif for display type. The feeling to
+  aim for is a good guidebook: dense with information, calm to look at, nothing
+  shouting.
+*/
+
+@theme {
+  --color-ink-950: #0b0d10;
+  --color-ink-900: #11141a;
+  --color-ink-850: #161a21;
+  --color-ink-800: #1c212a;
+  --color-ink-700: #262d38;
+  --color-ink-600: #38414f;
+  --color-ink-500: #5b6675;
+  --color-ink-400: #8892a0;
+  --color-ink-300: #b3bbc6;
+  --color-ink-100: #e8ebef;
+
+  --color-glow: #f0b429;
+  --color-deep: #b77c00;
+  --color-jade: #3fb984;
+  --color-coral: #f2765e;
+
+  --font-display: ui-serif, 'Iowan Old Style', 'Palatino Linotype', Georgia, serif;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background: var(--color-ink-950);
+    color: var(--color-ink-100);
+    font-family: var(--font-sans);
+    /* Faint warm wash from the top so the page doesn't read as flat black. */
+    background-image: radial-gradient(
+      120% 80% at 50% -20%,
+      rgba(240, 180, 41, 0.09) 0%,
+      transparent 60%
+    );
+    background-attachment: fixed;
+    min-height: 100dvh;
+  }
+
+  ::selection {
+    background: rgba(240, 180, 41, 0.28);
+  }
+
+  /* Visible focus for keyboard users, not for mouse users. */
+  :focus-visible {
+    outline: 2px solid var(--color-glow);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+}
+
+@layer utilities {
+  .font-display {
+    font-family: var(--font-display);
+  }
+
+  .card {
+    background: color-mix(in srgb, var(--color-ink-900) 88%, transparent);
+    border: 1px solid var(--color-ink-800);
+    border-radius: 14px;
+  }
+
+  .card-hover {
+    transition: border-color 160ms ease, transform 160ms ease;
+  }
+  .card-hover:hover {
+    border-color: var(--color-ink-600);
+    transform: translateY(-1px);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .card-hover {
+      transition: none;
+    }
+    .card-hover:hover {
+      transform: none;
+    }
+  }
+}

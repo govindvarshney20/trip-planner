@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { ItineraryDay, PlansState, StopWithVotes } from '@/lib/types';
+import { postJson } from '@/lib/fetch-json';
 import { Button, Spinner } from './ui';
 import { StopSheet } from './stop-sheet';
 
@@ -36,16 +37,13 @@ export function PlanPanel({
     setRetrying(true);
     setError(null);
     try {
-      const res = await fetch(`/api/trips/${encodeURIComponent(code)}/plan/generate`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ force }),
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? 'Could not build your plan');
+      await postJson(`/api/trips/${encodeURIComponent(code)}/plan/generate`, { force });
       router.refresh();
     } catch (err) {
       setError((err as Error).message);
+      // A timeout often means the work finished server-side just after the
+      // gateway gave up, so pull fresh state rather than leaving a dead spinner.
+      router.refresh();
     } finally {
       setRetrying(false);
     }
@@ -61,14 +59,12 @@ export function PlanPanel({
     let cancelled = false;
     void (async () => {
       try {
-        const res = await fetch(`/api/trips/${encodeURIComponent(code)}/plan/generate`, {
-          method: 'POST',
-        });
-        const body = await res.json();
-        if (!res.ok) throw new Error(body.error ?? 'Could not build your plan');
+        await postJson(`/api/trips/${encodeURIComponent(code)}/plan/generate`, {});
         if (!cancelled) router.refresh();
       } catch (err) {
-        if (!cancelled) setError((err as Error).message);
+        if (cancelled) return;
+        setError((err as Error).message);
+        router.refresh();
       }
     })();
 

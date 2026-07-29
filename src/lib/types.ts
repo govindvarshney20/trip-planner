@@ -44,6 +44,10 @@ export interface Trip {
   destination: string;
   start_date: string | null;
   end_date: string | null;
+  /** 'YYYY-MM'. Primary "when" signal until exact dates are committed. */
+  travel_month: string | null;
+  /** Authoritative trip length; read it via tripDays(), not from the dates. */
+  day_count: number | null;
   party_size: number;
   budget_level: BudgetLevel | null;
   currency: string;

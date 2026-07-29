@@ -12,16 +12,15 @@ three — and refuses to hand you an itinerary that can't physically be done.
 
 | Area | State |
 |---|---|
-| Create a trip, invite by link or spoken code | ✅ |
+| Landing page create flow — 5 fields, rest behind a toggle | ✅ |
 | Join with no signup — name and an avatar | ✅ |
-| **Blueprints** — three auto-generated whole-trip options, blind ranked vote | ✅ |
+| **Auto-generated day-by-day itinerary**, grounded with citations | ✅ |
+| Per-stop deep dive — what people say, ratings, fees, tips, links out | ✅ |
 | Preference intake + **Group DNA** (agreement, splits, conflicts) | ✅ |
-| AI shortlist suggestions, grounded in Google Search with citations | ✅ |
-| React 🔥 / 👍 / 😐 / ❌, auto-ranked board | ✅ |
-| AI Concierge — trip-aware Q&A with sources | ✅ |
-| Day-by-day itinerary builder + feasibility engine | ⏳ schema ready, UI next |
-| Formal votes with deadlines | ⏳ next |
-| Expenses, packing, docs locker | ⏳ later |
+| AI Concierge — knows the actual plan, answers with sources | ✅ |
+| Edit the plan — accept, remove, reorder | ⏳ next |
+| Per-stop voting + AI alternatives to swap in | ⏳ next |
+| Exact dates at lock-in, expenses, packing, docs locker | ⏳ later |
 
 ---
 
@@ -54,8 +53,10 @@ Fill in:
 Open the Supabase dashboard → **SQL Editor** → **New query**, then run each
 migration in order:
 
-1. [`supabase/migrations/0001_init.sql`](supabase/migrations/0001_init.sql)
-2. [`supabase/migrations/0002_plans.sql`](supabase/migrations/0002_plans.sql)
+1. [`0001_init.sql`](supabase/migrations/0001_init.sql)
+2. [`0002_plans.sql`](supabase/migrations/0002_plans.sql)
+3. [`0003_flexible_dates.sql`](supabase/migrations/0003_flexible_dates.sql)
+4. [`0004_itinerary.sql`](supabase/migrations/0004_itinerary.sql)
 
 ### 4. Run
 
@@ -91,31 +92,35 @@ set, with the cookie path kept for legacy members.
 
 ---
 
-## Blueprints and blind voting
+## How the plan stays fast
 
-The weakest moment in a planning tool is the empty board: it asks people to
-invent ideas from nothing, which is the hardest thing to ask, at the point where
-engagement matters most. People react far better than they generate.
+The itinerary is **one** Gemini call. Everything expensive is deferred.
 
-So the moment a trip exists, Wayfare generates **three genuinely different,
-internally coherent plans** from the creator's brief — and the group votes
-between whole trips rather than approving a single proposal. "What kind of trip
-are we taking?" is the question that actually needs answering, and three options
-surface it in one round.
+A 9-day plan has around 30 stops. Researching all of them upfront would be
+minutes of waiting and a grounded lookup per stop — most of which nobody reads.
+So:
 
-Neutrality is enforced mechanically, not just by asking the model nicely:
+| Job | When | Cost |
+|---|---|---|
+| `generateItinerary` | Once, on first view of the Plan tab | 1 grounded call, ~25s |
+| `fetchStopDetail` | Only when someone opens a stop | 1 grounded call, cached on the row forever |
 
-| Bias | Defence |
-|---|---|
-| One member's taste shapes the options | Generated from the trip brief only, before any preference is recorded |
-| Bandwagon voting | **Blind** — tallies are withheld server-side until everyone has voted |
-| Position bias | Per-member deterministic shuffle, so "first on the page" isn't the same plan for everyone |
-| Anchoring on one proposal | Three options, each with a stated tradeoff. No strawmen |
-| Loudest voice wins | Ranked Borda count, tie-broken toward the plan nobody ranked last |
+Detail is cached in `plan_stops.detail`, so a group of four pays for each place
+once, not four times.
 
-The blind-vote guarantee lives in `loadPlans()`, not the UI: before reveal the
-payload contains no tally and no other member's ranking, so it cannot leak
-through the page response.
+Generation is claimed with a conditional `UPDATE` on `trips.plans_state`.
+Several members may open the tab at once; whoever's update returns a row owns
+the job and the rest poll. A claim older than three minutes can be taken over,
+so a crash can't wedge a trip in `generating`.
+
+**Images are not fetched or hosted.** Every stop links out to Google Images and
+Google Maps instead — always has coverage, costs nothing, needs no API key, and
+Maps is where people want to end up anyway.
+
+**Reviews are summarised, never reproduced.** `what_people_say` is a grounded
+synthesis of recurring praise and complaints with citations. Copying review
+bodies out of Google or TripAdvisor breaks their terms and breaks the first time
+they change their markup.
 
 ## AI notes
 
@@ -148,18 +153,23 @@ fine; a fabricated `4.7` is not.
 ```
 src/
   app/
-    page.tsx              landing
-    new/                  create a trip
+    page.tsx              landing — the create form lives here, no /new route
     t/[code]/             the trip workspace (invite token or join code)
     api/trips/...         all mutations — the only path to the database
-  components/             UI, all client components
+  components/
+    plan-panel.tsx        overview -> day -> stop
+    stop-sheet.tsx        the deep dive, lazy-loads its own detail
+    preferences-panel.tsx trip setup + Group DNA
+    concierge.tsx         Ask
   lib/
+    itinerary.ts          plan generation, stop detail, Google link-outs
+    concierge.ts          trip-aware Q&A prompting
     dna.ts                Group DNA: agreement, splits, conflicts
     gemini.ts             model client, grounding fallback, citations
-    suggest.ts            prompts for suggestions and the concierge
+    trip-copy.ts          dates, months, derived names, currency guess
     session.ts            cookie-based membership
-    api.ts                shared route plumbing
-supabase/migrations/      paste-into-dashboard SQL
+    api.ts                shared route plumbing + data loaders
+supabase/migrations/      paste-into-dashboard SQL, run in order
 ```
 
 ## Scripts

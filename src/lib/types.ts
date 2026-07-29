@@ -2,8 +2,6 @@ export type BudgetLevel = 'shoestring' | 'value' | 'comfort' | 'luxury';
 export type Pace = 'chill' | 'balanced' | 'packed';
 export type WakeTime = 'early' | 'mid' | 'late';
 export type Intensity = 'low' | 'moderate' | 'high';
-export type ReactionValue = 'must' | 'keen' | 'meh' | 'no';
-export type IdeaCategory = 'sight' | 'food' | 'activity' | 'stay' | 'transport' | 'experience';
 
 export const INTERESTS = [
   'food',
@@ -27,14 +25,6 @@ export const DIETARY = [
   'gluten-free',
   'seafood-allergy',
 ] as const;
-
-/** Weight each reaction contributes to an idea's group score. */
-export const REACTION_WEIGHT: Record<ReactionValue, number> = {
-  must: 3,
-  keen: 1,
-  meh: 0,
-  no: -3,
-};
 
 export interface Trip {
   id: string;
@@ -90,96 +80,94 @@ export interface Citation {
   uri: string;
 }
 
-export interface Idea {
-  id: string;
-  trip_id: string;
-  title: string;
-  category: IdeaCategory;
-  locality: string | null;
-  description: string | null;
-  why_fits: string | null;
-  rating: number | null;
-  rating_count: number | null;
-  price_note: string | null;
-  duration_hours: number | null;
-  best_time: string | null;
-  booking_url: string | null;
-  image_url: string | null;
-  lat: number | null;
-  lng: number | null;
-  source: 'ai' | 'member' | 'link';
-  sources: Citation[];
-  grounded: boolean;
-  added_by: string | null;
-  created_at: string;
-}
-
-export interface Reaction {
-  idea_id: string;
-  member_id: string;
-  value: ReactionValue;
-}
 
 export type PlansState = 'none' | 'generating' | 'ready' | 'failed';
 
-export interface PlanDay {
-  id: string;
-  plan_id: string;
+export type StopKind = 'activity' | 'meal' | 'travel' | 'stay' | 'rest';
+export type StopStatus = 'proposed' | 'accepted' | 'removed';
+export type StopVoteValue = 'keep' | 'drop';
+
+export interface DayWarning {
+  level: 'warn' | 'clash';
+  message: string;
+}
+
+export interface TripDay {
+  trip_id: string;
   day_index: number;
   title: string;
   locality: string | null;
   summary: string | null;
-  items: {
-    title: string;
-    kind?: 'activity' | 'meal' | 'travel' | 'rest';
-    duration_hours?: number;
-    note?: string;
-  }[];
-  warnings: { level: 'warn' | 'clash'; message: string }[];
+  warnings: DayWarning[];
 }
 
-export interface Plan {
+/** Deep detail, fetched on demand and cached on the stop row. */
+export interface StopDetail {
+  what_it_is?: string;
+  what_people_say?: string;
+  rating?: number;
+  rating_count?: number;
+  fees?: string;
+  opening_hours?: string;
+  best_time?: string;
+  duration_hours?: number;
+  tips?: string[];
+  watch_out_for?: string[];
+  getting_there?: string;
+}
+
+export interface PlanStop {
   id: string;
   trip_id: string;
-  label: string;
-  tagline: string;
-  tradeoff: string;
-  cost_estimate: string | null;
-  intensity: 'low' | 'moderate' | 'high' | null;
-  best_for: string | null;
+  day_index: number;
+  position: number;
+  title: string;
+  locality: string | null;
+  kind: StopKind;
+  summary: string | null;
+  why_included: string | null;
+  duration_hours: number | null;
+  cost_note: string | null;
+  best_time: string | null;
+  status: StopStatus;
+  detail: StopDetail | null;
+  detail_sources: Citation[];
+  detail_grounded: boolean;
+  detail_fetched_at: string | null;
+  created_at: string;
+}
+
+export interface StopVote {
+  stop_id: string;
+  member_id: string;
+  value: StopVoteValue;
+}
+
+export interface StopAlternative {
+  id: string;
+  stop_id: string;
+  title: string;
+  locality: string | null;
+  summary: string | null;
+  why: string | null;
+  duration_hours: number | null;
+  cost_note: string | null;
   sources: Citation[];
   grounded: boolean;
-  seed: number;
-  created_at: string;
-  days: PlanDay[];
 }
 
-/**
- * What the client is allowed to know about the vote.
- *
- * While voting is blind this carries only the member's own ranking and how many
- * people have voted -- never who voted for what, and never a tally. Those
- * fields stay undefined until reveal, so a curious member reading the network
- * response learns nothing they shouldn't.
- */
-export interface PlanVoteView {
-  revealed: boolean;
-  votedCount: number;
-  totalMembers: number;
-  myRanking: string[];
-  results?: {
-    planId: string;
-    points: number;
-    firsts: number;
-    noVetoes: boolean;
-  }[];
+/** A stop with its votes folded in, ready to render. */
+export interface StopWithVotes extends PlanStop {
+  votes: StopVote[];
+  keeps: number;
+  drops: number;
+  myVote: StopVoteValue | null;
 }
 
-/** An idea plus the group's aggregate verdict on it. */
-export interface ScoredIdea extends Idea {
-  reactions: Reaction[];
-  score: number;
-  /** True when at least one member vetoed it. */
-  contested: boolean;
-  votesIn: number;
+export interface ItineraryDay extends TripDay {
+  stops: StopWithVotes[];
+  /** Hours of travel in this day, so a brutal transfer day is visible at a glance. */
+  travelHours: number;
+  activeHours: number;
 }
+

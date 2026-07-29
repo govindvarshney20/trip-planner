@@ -2,20 +2,18 @@
 
 import { useState } from 'react';
 import type { GroupDna } from '@/lib/dna';
-import type { Member, Plan, PlanVoteView, Preferences, ScoredIdea, Trip } from '@/lib/types';
-import { tripWhen } from '@/lib/trip-copy';
-import { DnaPanel } from './dna-panel';
-import { IdeasBoard } from './ideas-board';
-import { PlansPanel } from './plans-panel';
+import type { ItineraryDay, Member, PlansState, Preferences, Trip } from '@/lib/types';
+import { tripDays, tripWhen } from '@/lib/trip-copy';
+import { PlanPanel } from './plan-panel';
+import { PreferencesPanel } from './preferences-panel';
 import { Concierge, type ChatMessage } from './concierge';
 import { InviteBar } from './invite-bar';
 
-type Tab = 'plans' | 'crew' | 'ideas' | 'ask';
+type Tab = 'plan' | 'prefs' | 'ask';
 
 const TABS: { id: Tab; label: string }[] = [
-  { id: 'plans', label: 'Plans' },
-  { id: 'crew', label: 'Your group' },
-  { id: 'ideas', label: 'Ideas' },
+  { id: 'plan', label: 'Plan' },
+  { id: 'prefs', label: 'Preferences' },
   { id: 'ask', label: 'Ask' },
 ];
 
@@ -24,33 +22,25 @@ export function Workspace({
   me,
   members,
   dna,
-  ideas,
   myPrefs,
   messages,
   inviteUrl,
-  plans,
-  planVote,
+  days,
 }: {
   trip: Trip;
   me: Member;
   members: Member[];
   dna: GroupDna;
-  ideas: ScoredIdea[];
   myPrefs: Preferences | null;
   messages: ChatMessage[];
   inviteUrl: string;
-  plans: Plan[];
-  planVote: PlanVoteView;
+  days: ItineraryDay[];
 }) {
-  // Land on Plans until this member has ranked them: reacting to three concrete
-  // trips is a far better first move than facing an empty preferences form.
-  const [tab, setTab] = useState<Tab>(
-    planVote.myRanking.length === 0 ? 'plans' : myPrefs ? 'ideas' : 'crew',
-  );
+  const [tab, setTab] = useState<Tab>('plan');
   const when = tripWhen(trip);
 
   return (
-    <div className="mx-auto max-w-4xl px-4 pb-28 pt-8 sm:px-5">
+    <div className="mx-auto max-w-3xl px-4 pb-28 pt-8 sm:px-5">
       <header>
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
@@ -101,10 +91,9 @@ export function Workspace({
             }
           >
             {t.label}
-            {t.id === 'ideas' && ideas.length > 0 && (
-              <span className="ml-1.5 text-xs text-ink-500">{ideas.length}</span>
-            )}
-            {t.id === 'plans' && planVote.myRanking.length === 0 && plans.length > 0 && (
+            {/* Nudge toward Preferences once a plan exists but this member
+                hasn't told us anything -- that's when it pays off most. */}
+            {t.id === 'prefs' && !myPrefs && days.length > 0 && (
               <span className="ml-1.5 inline-block size-1.5 rounded-full bg-glow align-middle" />
             )}
           </button>
@@ -112,30 +101,27 @@ export function Workspace({
       </nav>
 
       <div className="mt-6">
-        {tab === 'plans' && (
-          <PlansPanel
+        {tab === 'plan' && (
+          <PlanPanel
             code={trip.invite_token}
-            plans={plans}
-            vote={planVote}
-            state={trip.plans_state}
-            me={me}
-            isOwner={me.role === 'owner'}
+            days={days}
+            state={trip.plans_state as PlansState}
+            dayCount={tripDays(trip)}
           />
         )}
-        {tab === 'crew' && (
-          <DnaPanel
+        {tab === 'prefs' && (
+          <PreferencesPanel
             code={trip.invite_token}
             dna={dna}
             members={members}
             me={me}
             myPrefs={myPrefs}
-            onSaved={() => setTab('ideas')}
+            trip={trip}
           />
         )}
-        {tab === 'ideas' && (
-          <IdeasBoard code={trip.invite_token} ideas={ideas} me={me} members={members} dna={dna} />
+        {tab === 'ask' && (
+          <Concierge code={trip.invite_token} initial={messages} members={members} />
         )}
-        {tab === 'ask' && <Concierge code={trip.invite_token} initial={messages} members={members} />}
       </div>
     </div>
   );

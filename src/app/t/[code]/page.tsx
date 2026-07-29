@@ -1,9 +1,9 @@
 import { notFound } from 'next/navigation';
 import { headers } from 'next/headers';
 import { db } from '@/lib/supabase';
-import { loadDna, loadMembers, loadPlans, loadTrip } from '@/lib/api';
+import { loadDna, loadItinerary, loadMembers, loadTrip } from '@/lib/api';
 import { getCurrentMember } from '@/lib/session';
-import { REACTION_WEIGHT, type Idea, type Preferences, type Reaction, type ScoredIdea } from '@/lib/types';
+import type { Preferences } from '@/lib/types';
 import { JoinGate } from '@/components/join-gate';
 import { Workspace } from '@/components/workspace';
 
@@ -31,38 +31,12 @@ export default async function TripPage({ params }: { params: Promise<{ code: str
     );
   }
 
-  const [dna, planData, ideasRes, reactionsRes, prefsRes, messagesRes] = await Promise.all([
+  const [dna, days, prefsRes, messagesRes] = await Promise.all([
     loadDna(trip.id),
-    loadPlans(trip.id, member.id, trip.plans_revealed_at),
-    db().from('ideas').select('*').eq('trip_id', trip.id).order('created_at', { ascending: false }),
-    db().from('reactions').select('*'),
+    loadItinerary(trip.id, member.id),
     db().from('preferences').select('*').eq('member_id', member.id).maybeSingle(),
-    db()
-      .from('messages')
-      .select('*')
-      .eq('trip_id', trip.id)
-      .order('created_at')
-      .limit(50),
+    db().from('messages').select('*').eq('trip_id', trip.id).order('created_at').limit(50),
   ]);
-
-  const ideas = (ideasRes.data ?? []) as Idea[];
-  const ideaIds = new Set(ideas.map((i) => i.id));
-  const allReactions = ((reactionsRes.data ?? []) as Reaction[]).filter((r) =>
-    ideaIds.has(r.idea_id),
-  );
-
-  const scored: ScoredIdea[] = ideas
-    .map((idea) => {
-      const reactions = allReactions.filter((r) => r.idea_id === idea.id);
-      return {
-        ...idea,
-        reactions,
-        score: reactions.reduce((sum, r) => sum + REACTION_WEIGHT[r.value], 0),
-        contested: reactions.some((r) => r.value === 'no'),
-        votesIn: reactions.length,
-      };
-    })
-    .sort((a, b) => b.score - a.score || a.title.localeCompare(b.title));
 
   return (
     <Workspace
@@ -70,12 +44,10 @@ export default async function TripPage({ params }: { params: Promise<{ code: str
       me={member}
       members={members}
       dna={dna}
-      ideas={scored}
       myPrefs={(prefsRes.data as Preferences) ?? null}
       messages={messagesRes.data ?? []}
       inviteUrl={`${await requestOrigin()}/t/${trip.invite_token}`}
-      plans={planData.plans}
-      planVote={planData.vote}
+      days={days}
     />
   );
 }

@@ -75,7 +75,8 @@ export function DnaPanel({
   members: Member[];
   me: Member;
   myPrefs: Preferences | null;
-  onSaved: () => void;
+  /** Optional: the Preferences tab has nowhere to send the user afterwards. */
+  onSaved?: () => void;
 }) {
   const router = useRouter();
   const [editing, setEditing] = useState(!myPrefs);
@@ -114,7 +115,7 @@ export function DnaPanel({
       if (!res.ok) throw new Error(body.error ?? 'Could not save');
       setEditing(false);
       router.refresh();
-      if (!myPrefs) onSaved();
+      if (!myPrefs) onSaved?.();
     } catch (err) {
       setError((err as Error).message);
     } finally {

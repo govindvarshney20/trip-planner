@@ -1,5 +1,5 @@
 import { researchThenStructure, type Researched } from './gemini';
-import { tripLengthDays } from './utils';
+import { formatMonth, tripDays } from './trip-copy';
 import type { Trip } from './types';
 
 /**
@@ -118,15 +118,19 @@ const PLANS_SCHEMA: Record<string, unknown> = {
 export async function generateBlueprints(
   trip: Trip,
 ): Promise<Researched<{ plans: Blueprint[] }>> {
-  const days = tripLengthDays(trip.start_date, trip.end_date);
-  const dayCount = days ?? 7;
+  const dayCount = tripDays(trip) ?? 7;
+  const when =
+    trip.start_date && trip.end_date
+      ? `Dates: ${trip.start_date} to ${trip.end_date}`
+      : trip.travel_month
+        ? `Travelling in: ${formatMonth(trip.travel_month)} (exact dates not fixed yet)`
+        : null;
 
   const facts = [
     `Destination: ${trip.destination}`,
     `Travellers: ${trip.party_size}`,
-    days
-      ? `Dates: ${trip.start_date} to ${trip.end_date} (${days} days on the ground)`
-      : `Length: assume ${dayCount} days`,
+    `Length: ${dayCount} days on the ground`,
+    when,
     trip.budget_level ? `Budget level: ${trip.budget_level}` : null,
     `Quote prices in: ${trip.currency}`,
     trip.brief ? `Notes from the organiser: ${trip.brief}` : null,

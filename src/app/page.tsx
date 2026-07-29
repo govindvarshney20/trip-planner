@@ -1,71 +1,85 @@
-import Link from 'next/link';
+import { CreateForm } from '@/components/create-form';
 import { JoinByCode } from '@/components/join-by-code';
 
-const PILLARS = [
+export const dynamic = 'force-dynamic';
+
+const STEPS = [
   {
-    title: 'See the group, not just the guesses',
-    body: 'Everyone answers a one-minute form. Wayfare shows you where you agree, where you split, and the tensions worth settling before you book anything.',
+    n: '01',
+    title: 'Tell us where and when',
+    body: 'A destination and a rough month is enough. Exact dates can wait until you book.',
   },
   {
-    title: 'Decisions that actually close',
-    body: 'Shortlist, react, vote with a deadline. When the clock runs out the choice is made and it lands in the itinerary. Nothing sits open for three weeks.',
+    n: '02',
+    title: 'Get a real plan',
+    body: 'A day-by-day itinerary with honest travel times, what each place costs, and why it made the cut.',
   },
   {
-    title: 'A plan that survives contact with reality',
-    body: 'We check travel times, opening hours and how much a day can hold. If a plan cannot be done, we say so instead of printing it neatly.',
+    n: '03',
+    title: 'Shape it together',
+    body: 'Send one link. Your friends vote, swap places for alternatives, and reorder days with you.',
   },
 ];
 
 export default function Home() {
+  // Passed in rather than read inside the client component, so the month list
+  // is deterministic for a given render.
+  const now = new Date().toISOString();
+
   return (
-    <main className="mx-auto max-w-5xl px-5 pb-24 pt-16 sm:pt-24">
-      <header className="mb-14">
-        <div className="mb-8 flex items-center gap-2">
-          <span className="text-lg">🧭</span>
-          <span className="font-display text-lg tracking-wide">Wayfare</span>
-        </div>
+    <main className="mx-auto max-w-5xl px-5 pb-20 pt-10 sm:pt-16">
+      <div className="mb-10 flex items-center gap-2">
+        <span className="text-lg">🧭</span>
+        <span className="font-display text-lg tracking-wide">Wayfare</span>
+      </div>
 
-        <h1 className="font-display text-4xl leading-[1.1] sm:text-6xl">
-          Plan the trip together,
-          <br />
-          <span className="text-glow">and actually decide.</span>
-        </h1>
+      {/*
+        DOM order is the mobile order: headline, form, then how-it-works. The
+        form is the product, so on a phone it sits directly under the promise
+        rather than below three paragraphs of explanation. On desktop explicit
+        grid placement moves it into its own column without reordering markup.
+      */}
+      <div className="grid gap-10 lg:grid-cols-[1fr_minmax(0,400px)] lg:gap-14">
+        <header className="lg:col-start-1 lg:row-start-1">
+          <h1 className="font-display text-[2.5rem] leading-[1.08] sm:text-5xl lg:text-[3.4rem]">
+            Tell us where.
+            <br />
+            <span className="text-glow">We&rsquo;ll plan the rest.</span>
+          </h1>
 
-        <p className="mt-6 max-w-xl text-base leading-relaxed text-ink-300 sm:text-lg">
-          Group trips die in the group chat. Wayfare gathers what everyone wants, turns it
-          into a shortlist you vote on, and builds a day-by-day plan that holds up in the real
-          world.
-        </p>
+          <p className="mt-5 max-w-lg text-base leading-relaxed text-ink-300 sm:text-lg">
+            A complete day-by-day plan in under a minute — then your friends vote, swap and shape
+            it with you. No more planning a trip in a group chat.
+          </p>
+        </header>
 
-        <div className="mt-9 flex flex-wrap items-center gap-3">
-          <Link
-            href="/new"
-            className="rounded-lg bg-glow px-5 py-3 text-sm font-semibold text-ink-950 transition-colors hover:bg-[#ffc53d]"
-          >
-            Start a trip
-          </Link>
-          <span className="text-sm text-ink-500">Free. No signup for you or your friends.</span>
-        </div>
-      </header>
-
-      <section className="grid gap-4 sm:grid-cols-3">
-        {PILLARS.map((p) => (
-          <div key={p.title} className="card p-5">
-            <h2 className="font-display text-lg leading-snug">{p.title}</h2>
-            <p className="mt-2.5 text-sm leading-relaxed text-ink-400">{p.body}</p>
+        <div className="lg:col-start-2 lg:row-span-2 lg:row-start-1">
+          <div className="lg:sticky lg:top-8">
+            <CreateForm monthsFrom={now} />
           </div>
-        ))}
-      </section>
-
-      <section className="card mt-6 p-5">
-        <h2 className="font-display text-lg">Been invited?</h2>
-        <p className="mt-1.5 text-sm text-ink-400">
-          Enter the code your friend read out, or just open their link.
-        </p>
-        <div className="mt-4 max-w-sm">
-          <JoinByCode />
         </div>
-      </section>
+
+        <section className="lg:col-start-1 lg:row-start-2">
+          <ol className="space-y-5">
+            {STEPS.map((s) => (
+              <li key={s.n} className="flex gap-4">
+                <span className="mt-0.5 font-display text-sm text-ink-600">{s.n}</span>
+                <div>
+                  <h2 className="text-sm font-medium text-ink-100">{s.title}</h2>
+                  <p className="mt-1 max-w-md text-sm leading-relaxed text-ink-400">{s.body}</p>
+                </div>
+              </li>
+            ))}
+          </ol>
+
+          <div className="mt-10">
+            <p className="text-xs uppercase tracking-wide text-ink-600">Been invited?</p>
+            <div className="mt-2.5 max-w-xs">
+              <JoinByCode />
+            </div>
+          </div>
+        </section>
+      </div>
     </main>
   );
 }

@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import type { GroupDna } from '@/lib/dna';
 import type { Member, Plan, PlanVoteView, Preferences, ScoredIdea, Trip } from '@/lib/types';
-import { tripLengthDays } from '@/lib/utils';
+import { tripWhen } from '@/lib/trip-copy';
 import { DnaPanel } from './dna-panel';
 import { IdeasBoard } from './ideas-board';
 import { PlansPanel } from './plans-panel';
@@ -47,7 +47,7 @@ export function Workspace({
   const [tab, setTab] = useState<Tab>(
     planVote.myRanking.length === 0 ? 'plans' : myPrefs ? 'ideas' : 'crew',
   );
-  const days = tripLengthDays(trip.start_date, trip.end_date);
+  const when = tripWhen(trip);
 
   return (
     <div className="mx-auto max-w-4xl px-4 pb-28 pt-8 sm:px-5">
@@ -61,8 +61,7 @@ export function Workspace({
             <h1 className="truncate font-display text-2xl sm:text-3xl">{trip.name}</h1>
             <p className="mt-1 text-sm text-ink-400">
               {trip.destination}
-              {days ? ` · ${days} days` : ''}
-              {trip.start_date ? ` · from ${trip.start_date}` : ''}
+              {when ? ` · ${when}` : ''}
             </p>
           </div>
 

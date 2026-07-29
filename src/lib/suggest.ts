@@ -1,6 +1,6 @@
 import { researchThenStructure, askGrounded, type Researched } from './gemini';
 import { dnaToPrompt, type GroupDna } from './dna';
-import { tripLengthDays } from './utils';
+import { formatMonth, tripDays } from './trip-copy';
 import type { Citation, Trip } from './types';
 
 /**
@@ -73,11 +73,16 @@ const IDEAS_SCHEMA: Record<string, unknown> = {
 };
 
 function tripContext(trip: Trip, dna: GroupDna): string {
-  const days = tripLengthDays(trip.start_date, trip.end_date);
+  const days = tripDays(trip);
   const parts = [
     `Destination: ${trip.destination}`,
     `Travellers: ${trip.party_size}`,
-    days ? `Length: ${days} days (${trip.start_date} to ${trip.end_date})` : null,
+    days ? `Length: ${days} days` : null,
+    trip.start_date && trip.end_date
+      ? `Dates: ${trip.start_date} to ${trip.end_date}`
+      : trip.travel_month
+        ? `Travelling in: ${formatMonth(trip.travel_month)} (exact dates not fixed yet)`
+        : null,
     trip.budget_level ? `Trip budget level: ${trip.budget_level}` : null,
     `Currency for prices: ${trip.currency}`,
     trip.brief ? `Notes from the organiser: ${trip.brief}` : null,

@@ -32,12 +32,14 @@ export function PlanPanel({
   const [retrying, setRetrying] = useState(false);
   const kickedOff = useRef(false);
 
-  async function generate() {
+  async function generate(force = false) {
     setRetrying(true);
     setError(null);
     try {
       const res = await fetch(`/api/trips/${encodeURIComponent(code)}/plan/generate`, {
         method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ force }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? 'Could not build your plan');
@@ -98,7 +100,7 @@ export function PlanPanel({
             : `Researching your destination and laying out ${dayCount ?? 'your'} days. About half a minute.`}
         </p>
         {(failed || state === 'none') && (
-          <Button onClick={generate} disabled={retrying} className="mt-5">
+          <Button onClick={() => generate(true)} disabled={retrying} className="mt-5">
             {retrying && <Spinner />}
             {retrying ? 'Working…' : 'Try again'}
           </Button>
@@ -116,6 +118,29 @@ export function PlanPanel({
 
   const totalStops = days.reduce((n, d) => n + d.stops.length, 0);
   const totalTravel = Math.round(days.reduce((n, d) => n + d.travelHours, 0) * 10) / 10;
+
+  // Days with no stops at all is a failed generation wearing a plan's clothes.
+  // Say so and offer a rebuild rather than presenting an empty contents page.
+  if (totalStops === 0) {
+    return (
+      <div className="card p-10 text-center">
+        <h2 className="font-display text-xl">This plan didn’t build properly</h2>
+        <p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-ink-400">
+          We got the shape of your {days.length} days but none of the actual stops. Rebuilding
+          usually fixes it.
+        </p>
+        <Button onClick={() => generate(true)} disabled={retrying} className="mt-5">
+          {retrying && <Spinner />}
+          {retrying ? 'Rebuilding…' : 'Rebuild my plan'}
+        </Button>
+        {error && (
+          <p role="alert" className="mt-4 text-sm text-coral">
+            {error}
+          </p>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-3">

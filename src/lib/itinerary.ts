@@ -1,4 +1,9 @@
-import { researchThenStructure, type Researched } from './gemini';
+import {
+  askGrounded,
+  generateStructured,
+  researchThenStructure,
+  type Researched,
+} from './gemini';
 import { dnaToPrompt, type GroupDna } from './dna';
 import { formatMonth, tripDays } from './trip-copy';
 import type { Trip } from './types';
@@ -76,26 +81,32 @@ const ITINERARY_SCHEMA: Record<string, unknown> = {
           },
           stops: {
             type: 'array',
+            description: 'The things you actually do, in order. Never empty.',
             items: {
               type: 'object',
               properties: {
                 title: { type: 'string', description: 'Specific, named place or leg' },
                 kind: { type: 'string', enum: ['activity', 'meal', 'travel', 'stay', 'rest'] },
                 locality: { type: 'string' },
-                summary: { type: 'string', description: 'One or two sentences' },
+                summary: {
+                  type: 'string',
+                  description: 'Two or three sentences on what you actually do here',
+                },
                 why_included: {
                   type: 'string',
-                  description: "One sentence on why it suits THIS group specifically",
+                  description: 'One sentence on why it suits THIS group specifically',
                 },
                 duration_hours: { type: 'number' },
                 cost_note: { type: 'string', description: 'Per person, in the trip currency' },
                 best_time: { type: 'string' },
               },
-              required: ['title'],
+              required: ['title', 'summary', 'duration_hours'],
             },
           },
         },
-        required: ['day_index', 'title'],
+        // stops is required. Left optional, the model happily returned nine
+        // day-level summaries and no actual plan -- a table of contents.
+        required: ['day_index', 'title', 'summary', 'stops'],
       },
     },
   },
@@ -130,6 +141,30 @@ function tripFacts(trip: Trip, dna: GroupDna | null): string {
   return lines.filter((l) => l !== null).join('\n');
 }
 
+/** Days that are usable: right index, and at least one real stop. */
+export function usableDays(days: GeneratedDay[], dayCount: number): GeneratedDay[] {
+  return days
+    .filter((d) => Number.isInteger(d.day_index) && d.day_index >= 0 && d.day_index < dayCount)
+    // The model occasionally repeats a day_index; the primary key would reject
+    // the whole batch, so keep the first occurrence.
+    .filter((d, i, arr) => arr.findIndex((x) => x.day_index === d.day_index) === i)
+    .filter((d) => (d.stops?.length ?? 0) > 0)
+    .sort((a, b) => a.day_index - b.day_index);
+}
+
+/**
+ * Was this generation good enough to show someone?
+ *
+ * A plan needs every day populated. Anything less and we would be presenting a
+ * contents page as an itinerary -- which is exactly what shipped the first time,
+ * because "the model returned some days" was treated as success.
+ */
+function isComplete(days: GeneratedDay[], dayCount: number): boolean {
+  const good = usableDays(days, dayCount);
+  if (good.length < dayCount) return false;
+  return good.every((d) => (d.stops?.length ?? 0) >= 2);
+}
+
 export async function generateItinerary(
   trip: Trip,
   dna: GroupDna | null,
@@ -159,8 +194,12 @@ ${facts}
 
 Rules for the output:
 - Exactly ${dayCount} days, day_index 0 to ${dayCount - 1}. Do not skip a day.
-- 3 to 5 stops per day, in the order they happen.
+- EVERY day must have a non-empty "stops" array with 3 to 5 stops, in the order
+  they happen. A day with no stops is not an acceptable answer. Day-level
+  summaries alone are useless -- the stops ARE the plan.
 - Include travel legs as stops with kind "travel" and their real duration.
+- Each stop needs a summary of two or three sentences saying what you actually
+  do there, a realistic duration_hours, and a cost_note per person.
 - Group each day geographically. Do not bounce across a city and back.
 - Leave the last day light if they are flying out.
 - Every stop needs why_included, tied to what this group actually wants.
@@ -169,12 +208,44 @@ Rules for the output:
 Build the plan you would genuinely recommend, not the one that crams in the
 most.`;
 
-  return researchThenStructure<{ days: GeneratedDay[] }>(
-    researchPrompt,
-    structurePrompt,
-    ITINERARY_SCHEMA,
-    SYSTEM,
+  // The research pass is the expensive, grounded half. Run it once and reuse
+  // its notes for both structuring attempts rather than re-searching.
+  const research = await askGrounded(researchPrompt, SYSTEM);
+  const notes = `\n\n--- RESEARCH NOTES ---\n${research.text}`;
+
+  const structure = (prompt: string) =>
+    generateStructured<{ days: GeneratedDay[] }>(prompt + notes, ITINERARY_SCHEMA, SYSTEM);
+
+  const first = await structure(structurePrompt);
+  const firstGood = usableDays(first.days ?? [], dayCount);
+
+  if (isComplete(first.days ?? [], dayCount)) {
+    return { data: first, sources: research.sources, grounded: research.grounded };
+  }
+
+  // One corrective retry, telling it exactly which days it got wrong. Only the
+  // structuring pass repeats, so this costs a fraction of a full regeneration.
+  const missing = Array.from({ length: dayCount }, (_, i) => i).filter(
+    (i) => !firstGood.some((d) => d.day_index === i),
   );
+
+  const second = await structure(`${structurePrompt}
+
+YOUR PREVIOUS ATTEMPT WAS REJECTED.
+${
+  missing.length
+    ? `These days were missing or had no stops: ${missing.map((i) => i + 1).join(', ')}.`
+    : 'Some days had fewer than two stops.'
+}
+Return all ${dayCount} days, each with a non-empty stops array of 3 to 5 stops.
+This is the requirement that matters most.`);
+
+  // Whichever attempt produced more usable days wins -- never return the
+  // emptier one just because it came second.
+  const better =
+    usableDays(second.days ?? [], dayCount).length > firstGood.length ? second : first;
+
+  return { data: better, sources: research.sources, grounded: research.grounded };
 }
 
 /* -------------------------------------------------------------------------

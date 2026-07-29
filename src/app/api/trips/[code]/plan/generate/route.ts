@@ -1,7 +1,7 @@
 import { db } from '@/lib/supabase';
 import { fail, guard, loadDna, loadTrip, ok } from '@/lib/api';
 import { requireMember } from '@/lib/session';
-import { generateItinerary } from '@/lib/itinerary';
+import { generateItinerary, usableDays } from '@/lib/itinerary';
 import { tripDays } from '@/lib/trip-copy';
 
 export const maxDuration = 60;
@@ -9,13 +9,27 @@ export const maxDuration = 60;
 /** A claim older than this is assumed dead and may be taken over. */
 const STALE_CLAIM_MS = 3 * 60 * 1000;
 
-export async function POST(_req: Request, ctx: { params: Promise<{ code: string }> }) {
+export async function POST(req: Request, ctx: { params: Promise<{ code: string }> }) {
   return guard(async () => {
     const { code } = await ctx.params;
     const trip = await loadTrip(code);
     if (!trip) return fail('That trip does not exist', 404);
 
     await requireMember(trip.id);
+
+    const body = (await req.json().catch(() => ({}))) as { force?: boolean };
+
+    if (body.force) {
+      // Rebuild from scratch. Needed to recover a trip whose plan generated
+      // badly, and to let a group start over deliberately. Cascades clear the
+      // stops, their votes and alternatives.
+      const { error: delDays } = await db().from('trip_days').delete().eq('trip_id', trip.id);
+      if (delDays) throw new Error(delDays.message);
+      const { error: delStops } = await db().from('plan_stops').delete().eq('trip_id', trip.id);
+      if (delStops) throw new Error(delStops.message);
+      await db().from('trips').update({ plans_state: 'none' }).eq('id', trip.id);
+      trip.plans_state = 'none';
+    }
 
     if (trip.plans_state === 'ready') {
       return ok({ state: 'ready', message: 'Plan already exists' });
@@ -46,14 +60,16 @@ export async function POST(_req: Request, ctx: { params: Promise<{ code: string 
       const result = await generateItinerary(trip, dna.respondents > 0 ? dna : null);
 
       const expected = tripDays(trip) ?? 7;
-      const days = (result.data.days ?? [])
-        .filter((d) => Number.isInteger(d.day_index) && d.day_index >= 0 && d.day_index < expected)
-        // The model occasionally repeats a day_index; the table's primary key
-        // would reject the batch, so drop duplicates rather than fail.
-        .filter((d, i, arr) => arr.findIndex((x) => x.day_index === d.day_index) === i)
-        .sort((a, b) => a.day_index - b.day_index);
+      // usableDays drops malformed indices, de-duplicates, and — critically —
+      // discards days with no stops.
+      const days = usableDays(result.data.days ?? [], expected);
 
-      if (days.length === 0) throw new Error('The model returned no usable days');
+      // A plan without stops is a table of contents, not an itinerary. Marking
+      // that 'ready' is what put "9 days · 0 stops" in front of a user, so this
+      // fails loudly instead and the UI offers a retry.
+      if (days.length === 0) {
+        throw new Error('The model returned no days with any stops in them');
+      }
 
       const { error: dayErr } = await db().from('trip_days').insert(
         days.map((d) => ({
@@ -85,10 +101,12 @@ export async function POST(_req: Request, ctx: { params: Promise<{ code: string 
         })),
       );
 
-      if (stops.length) {
-        const { error: stopErr } = await db().from('plan_stops').insert(stops);
-        if (stopErr) throw new Error(stopErr.message);
-      }
+      // usableDays guarantees every day has stops, so an empty batch here means
+      // something upstream changed and the guarantee broke.
+      if (stops.length === 0) throw new Error('No stops to insert');
+
+      const { error: stopErr } = await db().from('plan_stops').insert(stops);
+      if (stopErr) throw new Error(stopErr.message);
 
       await db().from('trips').update({ plans_state: 'ready' }).eq('id', trip.id);
 

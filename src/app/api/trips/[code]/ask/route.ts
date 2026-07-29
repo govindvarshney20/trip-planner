@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import { db } from '@/lib/supabase';
-import { fail, guard, loadDna, loadTrip, ok } from '@/lib/api';
+import { fail, guard, loadDna, loadItinerary, loadTrip, ok } from '@/lib/api';
 import { requireMember } from '@/lib/session';
-import { askConcierge } from '@/lib/suggest';
+import { askConcierge } from '@/lib/concierge';
 
 export const maxDuration = 60;
 
@@ -22,9 +22,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ code: string }
     if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? 'Invalid input');
     const { question } = parsed.data;
 
-    const [dna, ideas, history] = await Promise.all([
+    const [dna, days, history] = await Promise.all([
       loadDna(trip.id),
-      db().from('ideas').select('title').eq('trip_id', trip.id).limit(40),
+      loadItinerary(trip.id, member.id),
       db()
         .from('messages')
         .select('role, content')
@@ -44,13 +44,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ code: string }
       content: question,
     });
 
-    const answer = await askConcierge(
-      trip,
-      dna,
-      question,
-      (ideas.data ?? []).map((r) => (r as { title: string }).title),
-      priorTurns,
-    );
+    const answer = await askConcierge(trip, dna, question, days, priorTurns);
 
     const { data: saved, error } = await db()
       .from('messages')

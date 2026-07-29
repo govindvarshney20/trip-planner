@@ -2,8 +2,17 @@ import { NextResponse } from 'next/server';
 import { db } from './supabase';
 import { normalizeJoinCode } from './codes';
 import { computeGroupDna, type GroupDna } from './dna';
-import { tallyVotes } from './plans';
-import type { Member, Plan, PlanDay, PlanVoteView, Preferences, Trip } from './types';
+import type {
+  ItineraryDay,
+  Member,
+  PlanStop,
+  Preferences,
+  StopKind,
+  StopVote,
+  StopWithVotes,
+  Trip,
+  TripDay,
+} from './types';
 
 /**
  * Shared plumbing for route handlers.
@@ -94,76 +103,60 @@ export async function loadMembers(tripId: string): Promise<Member[]> {
 }
 
 /**
- * Plans plus the vote state this member is entitled to see.
+ * The working itinerary: days, their stops, and each stop's votes.
  *
- * The blind-voting guarantee is enforced here rather than in the UI. Before
- * reveal the returned object contains no tally and no other member's ranking,
- * so it cannot leak through the page payload.
+ * Removed stops are kept out of the returned days -- they stay in the table so
+ * a removal is reversible, but they should not render.
  */
-export async function loadPlans(
+export async function loadItinerary(
   tripId: string,
   memberId: string,
-  revealedAt: string | null,
-): Promise<{ plans: Plan[]; vote: PlanVoteView }> {
-  const [plansRes, membersList, votesRes] = await Promise.all([
-    db().from('plans').select('*').eq('trip_id', tripId).order('seed'),
-    loadMembers(tripId),
-    db().from('plan_votes').select('plan_id, member_id, rank').eq('trip_id', tripId),
+): Promise<ItineraryDay[]> {
+  const [daysRes, stopsRes, votesRes] = await Promise.all([
+    db().from('trip_days').select('*').eq('trip_id', tripId).order('day_index'),
+    db()
+      .from('plan_stops')
+      .select('*')
+      .eq('trip_id', tripId)
+      .neq('status', 'removed')
+      .order('day_index')
+      .order('position'),
+    db().from('stop_votes').select('stop_id, member_id, value').eq('trip_id', tripId),
   ]);
-  if (plansRes.error) throw new DatabaseError(plansRes.error.message);
 
-  const planRows = (plansRes.data ?? []) as Omit<Plan, 'days'>[];
-  if (planRows.length === 0) {
-    return {
-      plans: [],
-      vote: { revealed: false, votedCount: 0, totalMembers: membersList.length, myRanking: [] },
-    };
-  }
-
-  const daysRes = await db()
-    .from('plan_days')
-    .select('*')
-    .in('plan_id', planRows.map((p) => p.id))
-    .order('day_index');
   if (daysRes.error) throw new DatabaseError(daysRes.error.message);
+  if (stopsRes.error) throw new DatabaseError(stopsRes.error.message);
 
-  const days = (daysRes.data ?? []) as PlanDay[];
-  const plans: Plan[] = planRows.map((p) => ({
-    ...p,
-    days: days.filter((d) => d.plan_id === p.id),
-  }));
+  const days = (daysRes.data ?? []) as TripDay[];
+  const stops = (stopsRes.data ?? []) as PlanStop[];
+  const votes = (votesRes.data ?? []) as StopVote[];
 
-  const allVotes = (votesRes.data ?? []) as {
-    plan_id: string;
-    member_id: string;
-    rank: number;
-  }[];
+  return days.map((day) => {
+    const dayStops: StopWithVotes[] = stops
+      .filter((s) => s.day_index === day.day_index)
+      .map((s) => {
+        const mine = votes.filter((v) => v.stop_id === s.id);
+        return {
+          ...s,
+          votes: mine,
+          keeps: mine.filter((v) => v.value === 'keep').length,
+          drops: mine.filter((v) => v.value === 'drop').length,
+          myVote: mine.find((v) => v.member_id === memberId)?.value ?? null,
+        };
+      });
 
-  const myRanking = allVotes
-    .filter((v) => v.member_id === memberId)
-    .sort((a, b) => a.rank - b.rank)
-    .map((v) => v.plan_id);
+    const hours = (kinds: StopKind[]) =>
+      dayStops
+        .filter((s) => kinds.includes(s.kind))
+        .reduce((sum, s) => sum + (Number(s.duration_hours) || 0), 0);
 
-  const votedCount = new Set(allVotes.map((v) => v.member_id)).size;
-  const revealed = !!revealedAt;
-
-  const vote: PlanVoteView = {
-    revealed,
-    votedCount,
-    totalMembers: membersList.length,
-    myRanking,
-  };
-
-  if (revealed) {
-    vote.results = tallyVotes(planRows.map((p) => p.id), allVotes).map((t) => ({
-      planId: t.planId,
-      points: t.points,
-      firsts: t.firsts,
-      noVetoes: t.noVetoes,
-    }));
-  }
-
-  return { plans, vote };
+    return {
+      ...day,
+      stops: dayStops,
+      travelHours: Math.round(hours(['travel']) * 10) / 10,
+      activeHours: Math.round(hours(['activity', 'meal', 'stay', 'rest']) * 10) / 10,
+    };
+  });
 }
 
 export async function loadDna(tripId: string): Promise<GroupDna> {

@@ -97,3 +97,33 @@ genuinely needs more.`;
   const res = await askGrounded(prompt, SYSTEM);
   return { text: res.text, sources: res.sources, grounded: res.grounded };
 }
+
+/**
+ * Ask a question about one specific stop, in the context of this trip.
+ *
+ * Scoped tightly to the place so "is it worth it with kids?" or "how bad are
+ * the crowds in October?" gets a focused, grounded answer without the user
+ * leaving the stop or re-explaining the trip.
+ */
+export async function askAboutStop(
+  trip: Trip,
+  stop: { title: string; locality: string | null; kind: string },
+  question: string,
+): Promise<ConciergeAnswer> {
+  const where = stop.locality ? `${stop.locality}, ${trip.destination}` : trip.destination;
+  const month = formatMonth(trip.travel_month);
+
+  const prompt = `A traveller is looking at "${stop.title}" in ${where} as part of
+a ${tripDays(trip) ?? ''}-day trip${month ? ` in ${month}` : ''}, party of ${trip.party_size}${
+    trip.budget_level ? `, ${trip.budget_level} budget` : ''
+  }.
+
+They ask about this specific place: "${question}"
+
+Answer just this question, about this place, concretely. Give real figures in
+${trip.currency} where you can. If you are not sure, say so rather than guess.
+Under 150 words.`;
+
+  const res = await askGrounded(prompt, SYSTEM);
+  return { text: res.text, sources: res.sources, grounded: res.grounded };
+}

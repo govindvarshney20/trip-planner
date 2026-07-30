@@ -123,22 +123,78 @@ export async function generateStructured<T>(
     config: {
       responseMimeType: 'application/json',
       responseSchema,
-      // A hard ceiling so a model that degenerates into repeating a phrase
-      // ("paved over recently, paved over recently, …") is cut off in tokens
-      // rather than filling the field with pages of it.
+      // A generous ceiling. It exists only as a backstop against a model that
+      // loops forever; it must NOT be so low it truncates a legitimate JSON
+      // body. Gemini's thinking tokens are spent from this same budget, so a
+      // tight cap can leave too little for the actual answer and cut the JSON
+      // mid-object -- which then fails to parse. The repetition guard, not this
+      // number, is what trims a degenerate loop.
       ...(opts.maxOutputTokens ? { maxOutputTokens: opts.maxOutputTokens } : {}),
       ...(systemInstruction ? { systemInstruction } : {}),
     },
   });
 
-  const raw = res.text ?? '';
+  return coerceJson<T>(res.text ?? '');
+}
+
+/**
+ * Parse model JSON, surviving the two ways it goes wrong: markdown fences
+ * around it, and truncation (the response cut off mid-structure when the token
+ * budget ran out). A truncated body is repaired by closing whatever strings and
+ * brackets were left open, which recovers everything up to the cut.
+ */
+export function coerceJson<T>(raw: string): T {
+  const stripped = raw
+    .trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/```\s*$/, '')
+    .trim();
+
   try {
-    return JSON.parse(raw) as T;
+    return JSON.parse(stripped) as T;
   } catch {
-    // Defensive: strip markdown fences if the model wraps its JSON.
-    const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
-    return JSON.parse(cleaned) as T;
+    // fall through to repair
   }
+
+  try {
+    return JSON.parse(repairTruncatedJson(stripped)) as T;
+  } catch {
+    throw new Error('The model returned an unreadable response. Please try again.');
+  }
+}
+
+/** Close strings and brackets left open by a truncated response. */
+function repairTruncatedJson(s: string): string {
+  const stack: string[] = [];
+  let inStr = false;
+  let esc = false;
+
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (esc) {
+      esc = false;
+      continue;
+    }
+    if (inStr) {
+      if (c === '\\') esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') inStr = true;
+    else if (c === '{') stack.push('}');
+    else if (c === '[') stack.push(']');
+    else if (c === '}' || c === ']') stack.pop();
+  }
+
+  let out = s;
+  if (inStr) out += '"'; // close a dangling string
+  // Drop a trailing comma or a half-written key/value before closing.
+  out = out.replace(/,\s*"[^"]*$/, '').replace(/,\s*$/, '');
+  for (let i = stack.length - 1; i >= 0; i--) out += stack[i];
+  // Finally, remove any comma left directly before a closing bracket, e.g. the
+  // trailing comma in {"a":1,} once the brace is back in place.
+  out = out.replace(/,(\s*[}\]])/g, '$1');
+  return out;
 }
 
 export interface Researched<T> {

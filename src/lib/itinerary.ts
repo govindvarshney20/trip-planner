@@ -344,7 +344,7 @@ verbatim, and never repeat a phrase.`;
     DETAIL_SCHEMA,
     SYSTEM,
     // Cap output so a degenerating model is cut off rather than emitting pages.
-    { maxOutputTokens: 1200 },
+    { maxOutputTokens: 4096 },
   );
 
   return { ...res, data: sanitizeStopDetail(res.data) };
@@ -447,7 +447,7 @@ Each needs a specific named place, a two-sentence summary, and a one-sentence
     structurePrompt,
     ALTERNATIVES_SCHEMA,
     SYSTEM,
-    { maxOutputTokens: 1500 },
+    { maxOutputTokens: 4096 },
   );
 
   return {

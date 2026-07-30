@@ -1,7 +1,7 @@
 import { db } from '@/lib/supabase';
 import { fail, guard, loadTrip, ok } from '@/lib/api';
 import { requireMember } from '@/lib/session';
-import { fetchStopDetail } from '@/lib/itinerary';
+import { fetchStopDetail, sanitizeStopDetail } from '@/lib/itinerary';
 import type { PlanStop } from '@/lib/types';
 
 export const maxDuration = 60;
@@ -39,8 +39,10 @@ export async function POST(
     const row = stop as PlanStop;
 
     if (row.detail && row.detail_fetched_at) {
+      // Clean on the way out, so detail cached before the repetition guard
+      // existed is fixed on next open without regenerating.
       return ok({
-        detail: row.detail,
+        detail: sanitizeStopDetail(row.detail),
         sources: row.detail_sources,
         grounded: row.detail_grounded,
         cached: true,

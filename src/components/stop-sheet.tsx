@@ -1,10 +1,11 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { googleImagesUrl, googleMapsUrl } from '@/lib/itinerary';
 import { postJson } from '@/lib/fetch-json';
 import type { Citation, StopDetail, StopWithVotes } from '@/lib/types';
-import { Badge, Spinner } from './ui';
+import { Badge, Button, Input, Spinner } from './ui';
 
 /**
  * The stop deep-dive.
@@ -28,6 +29,47 @@ export function StopSheet({
   const [loading, setLoading] = useState(!stop.detail);
   const [error, setError] = useState<string | null>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
+  const router = useRouter();
+
+  const [editing, setEditing] = useState(false);
+  const [title, setTitle] = useState(stop.title);
+  const [dur, setDur] = useState(stop.duration_hours?.toString() ?? '');
+  const [cost, setCost] = useState(stop.cost_note ?? '');
+  const [busy, setBusy] = useState(false);
+
+  const base = `/api/trips/${encodeURIComponent(code)}/plan/stops/${stop.id}`;
+
+  async function saveEdit() {
+    setBusy(true);
+    setError(null);
+    try {
+      await postJson(
+        base,
+        {
+          title: title.trim() || stop.title,
+          duration_hours: dur.trim() ? Number(dur) : null,
+          cost_note: cost.trim() || null,
+        },
+        'PATCH',
+      );
+      router.refresh();
+      onClose();
+    } catch (err) {
+      setError((err as Error).message);
+      setBusy(false);
+    }
+  }
+
+  async function removeStop() {
+    setBusy(true);
+    try {
+      await postJson(base, { status: 'removed' }, 'PATCH');
+      router.refresh();
+      onClose();
+    } finally {
+      setBusy(false);
+    }
+  }
 
   // Escape to close, and don't let the page scroll behind the sheet.
   useEffect(() => {
@@ -105,7 +147,54 @@ export function StopSheet({
         </div>
 
         <div className="space-y-5 px-5 py-5">
-          {stop.why_included && (
+          {editing ? (
+            <div className="space-y-2.5 rounded-lg border border-ink-800 p-3">
+              <label className="block text-xs uppercase tracking-wide text-ink-500">Name</label>
+              <Input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={160} />
+              <div className="flex gap-2">
+                <Input
+                  value={dur}
+                  onChange={(e) => setDur(e.target.value)}
+                  type="number"
+                  min={0}
+                  placeholder="Hours"
+                  className="w-24"
+                />
+                <Input
+                  value={cost}
+                  onChange={(e) => setCost(e.target.value)}
+                  placeholder="Cost per person"
+                  maxLength={120}
+                />
+              </div>
+              <div className="flex gap-2 pt-1">
+                <Button size="sm" onClick={saveEdit} disabled={busy}>
+                  {busy && <Spinner />}
+                  Save
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setEditing(false)} disabled={busy}>
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" variant="outline" onClick={() => setEditing(true)}>
+                Edit
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={removeStop}
+                disabled={busy}
+                className="text-ink-400 hover:text-coral"
+              >
+                Remove from plan
+              </Button>
+            </div>
+          )}
+
+          {stop.why_included && !editing && (
             <p className="text-sm leading-relaxed text-ink-300">
               <span className="text-ink-500">Why it’s in your plan — </span>
               {stop.why_included}

@@ -34,11 +34,15 @@ function explain(status: number, body: string): string {
   return `Request failed (${status}).`;
 }
 
-export async function postJson<T>(url: string, body?: unknown): Promise<T> {
+export async function postJson<T>(
+  url: string,
+  body?: unknown,
+  method: 'POST' | 'PATCH' | 'PUT' | 'DELETE' = 'POST',
+): Promise<T> {
   let res: Response;
   try {
     res = await fetch(url, {
-      method: 'POST',
+      method,
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body ?? {}),
     });

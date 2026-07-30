@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Citation, Member } from '@/lib/types';
+import { postJson } from '@/lib/fetch-json';
 import { Badge, Button, Input, Spinner } from './ui';
 
 export interface ChatMessage {
@@ -66,14 +67,11 @@ export function Concierge({
     setMessages((m) => [...m, optimistic]);
 
     try {
-      const res = await fetch(`/api/trips/${encodeURIComponent(code)}/ask`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ question: q }),
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? 'Could not get an answer');
-      setMessages((m) => [...m, body.message as ChatMessage]);
+      const body = await postJson<{ message: ChatMessage }>(
+        `/api/trips/${encodeURIComponent(code)}/ask`,
+        { question: q },
+      );
+      setMessages((m) => [...m, body.message]);
       router.refresh();
     } catch (err) {
       setError((err as Error).message);

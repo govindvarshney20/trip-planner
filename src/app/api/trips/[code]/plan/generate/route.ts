@@ -6,10 +6,21 @@ import { tripDays } from '@/lib/trip-copy';
 
 export const maxDuration = 60;
 
-/** A claim older than this is assumed dead and may be taken over. */
-const STALE_CLAIM_MS = 3 * 60 * 1000;
+/**
+ * A claim older than this is assumed dead and may be taken over.
+ *
+ * Kept just above maxDuration: when the function is killed by the platform the
+ * catch block never runs, so the trip is left in 'generating' and only a stale
+ * takeover can recover it. Three minutes of staring at a spinner was too long.
+ */
+const STALE_CLAIM_MS = 75_000;
+
+/** Leave headroom before the platform kills us, so we fail our own way. */
+const SELF_DEADLINE_MS = 52_000;
 
 export async function POST(req: Request, ctx: { params: Promise<{ code: string }> }) {
+  const deadline = Date.now() + SELF_DEADLINE_MS;
+
   return guard(async () => {
     const { code } = await ctx.params;
     const trip = await loadTrip(code);
@@ -57,7 +68,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ code: string }
       // Preferences are additive -- the first plan is built before anyone has
       // filled them in and must be good without them.
       const dna = await loadDna(trip.id);
-      const result = await generateItinerary(trip, dna.respondents > 0 ? dna : null);
+      const result = await generateItinerary(trip, dna.respondents > 0 ? dna : null, {
+        deadline,
+      });
 
       const expected = tripDays(trip) ?? 7;
       // usableDays drops malformed indices, de-duplicates, and — critically —

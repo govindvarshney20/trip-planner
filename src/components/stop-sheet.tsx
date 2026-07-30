@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { googleImagesUrl, googleMapsUrl } from '@/lib/itinerary';
+import { postJson } from '@/lib/fetch-json';
 import type { Citation, StopDetail, StopWithVotes } from '@/lib/types';
 import { Badge, Spinner } from './ui';
 
@@ -49,12 +50,11 @@ export function StopSheet({
     let cancelled = false;
     void (async () => {
       try {
-        const res = await fetch(
-          `/api/trips/${encodeURIComponent(code)}/plan/stops/${stop.id}/detail`,
-          { method: 'POST' },
-        );
-        const body = await res.json();
-        if (!res.ok) throw new Error(body.error ?? 'Could not load the details');
+        const body = await postJson<{
+          detail: StopDetail;
+          sources: Citation[];
+          grounded: boolean;
+        }>(`/api/trips/${encodeURIComponent(code)}/plan/stops/${stop.id}/detail`);
         if (cancelled) return;
         setDetail(body.detail);
         setSources(body.sources ?? []);

@@ -165,9 +165,18 @@ function isComplete(days: GeneratedDay[], dayCount: number): boolean {
   return good.every((d) => (d.stops?.length ?? 0) >= 2);
 }
 
+/**
+ * How long a structuring pass needs. If less than this remains before the
+ * serverless function is killed, skip the corrective retry and return what we
+ * have -- a partial plan the user can rebuild beats a gateway timeout, which
+ * loses the work entirely and leaves the claim stuck.
+ */
+const STRUCTURE_PASS_BUDGET_MS = 22_000;
+
 export async function generateItinerary(
   trip: Trip,
   dna: GroupDna | null,
+  opts: { deadline?: number } = {},
 ): Promise<Researched<{ days: GeneratedDay[] }>> {
   const dayCount = tripDays(trip) ?? 7;
   const facts = tripFacts(trip, dna);
@@ -220,6 +229,14 @@ most.`;
   const firstGood = usableDays(first.days ?? [], dayCount);
 
   if (isComplete(first.days ?? [], dayCount)) {
+    return { data: first, sources: research.sources, grounded: research.grounded };
+  }
+
+  // Only retry if there is genuinely time. Overrunning the function limit turns
+  // a usable partial plan into a gateway timeout, which discards the work and
+  // shows the user a platform error page.
+  const timeLeft = opts.deadline ? opts.deadline - Date.now() : Infinity;
+  if (timeLeft < STRUCTURE_PASS_BUDGET_MS) {
     return { data: first, sources: research.sources, grounded: research.grounded };
   }
 

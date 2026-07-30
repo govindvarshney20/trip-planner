@@ -377,6 +377,87 @@ function clip(text: string, max: number): string {
 }
 
 /* -------------------------------------------------------------------------
+ * Alternatives for a stop
+ * ---------------------------------------------------------------------- */
+
+export interface GeneratedAlternative {
+  title: string;
+  locality?: string;
+  summary?: string;
+  why?: string;
+  duration_hours?: number;
+  cost_note?: string;
+}
+
+const ALTERNATIVES_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  properties: {
+    alternatives: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: 'A specific, named place -- not a category' },
+          locality: { type: 'string' },
+          summary: { type: 'string', description: 'Two sentences on what you do there' },
+          why: { type: 'string', description: 'One sentence on how it differs from the original' },
+          duration_hours: { type: 'number' },
+          cost_note: { type: 'string' },
+        },
+        required: ['title', 'summary'],
+      },
+    },
+  },
+  required: ['alternatives'],
+};
+
+/**
+ * Three swap-in options for a stop the group doesn't like -- so a "no" always
+ * comes with an "instead?". Kept in the same locality and rough time slot so
+ * the day still hangs together, but genuinely different in character.
+ */
+export async function generateAlternatives(
+  trip: Trip,
+  dna: GroupDna | null,
+  stop: { title: string; locality: string | null; kind: string; duration_hours: number | null },
+): Promise<Researched<GeneratedAlternative[]>> {
+  const where = stop.locality || trip.destination;
+  const facts = tripFacts(trip, dna);
+  const dietary = dna?.dietary?.length
+    ? `\nHard dietary constraints to honour: ${dna.dietary.join(', ')}.`
+    : '';
+
+  const researchPrompt = `The group wants alternatives to "${stop.title}" in
+${where} -- a ${stop.kind}${stop.duration_hours ? ` of about ${stop.duration_hours} hours` : ''}.
+
+${facts}${dietary}
+
+Find 3 genuinely different, specific, named places or experiences in the same
+area that could take its slot: similar time and effort, but a different
+character (quieter, cheaper, more local, more active -- vary them). For each,
+note what it is, roughly how long it takes, and typical cost per person. Do not
+suggest "${stop.title}" itself.`;
+
+  const structurePrompt = `From the notes, give 3 alternatives to "${stop.title}".
+Each needs a specific named place, a two-sentence summary, and a one-sentence
+"why" saying how it differs. Omit any figure the notes do not support.`;
+
+  const res = await researchThenStructure<{ alternatives: GeneratedAlternative[] }>(
+    researchPrompt,
+    structurePrompt,
+    ALTERNATIVES_SCHEMA,
+    SYSTEM,
+    { maxOutputTokens: 1500 },
+  );
+
+  return {
+    data: (res.data.alternatives ?? []).slice(0, 3),
+    sources: res.sources,
+    grounded: res.grounded,
+  };
+}
+
+/* -------------------------------------------------------------------------
  * Links out
  *
  * We deliberately do not fetch or host images. A link to Google Images always

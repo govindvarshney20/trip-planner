@@ -18,8 +18,9 @@ three — and refuses to hand you an itinerary that can't physically be done.
 | Per-stop deep dive — what people say, ratings, fees, tips, links out | ✅ |
 | Preference intake + **Group DNA** (agreement, splits, conflicts) | ✅ |
 | AI Concierge — knows the actual plan, answers with sources | ✅ |
-| Edit the plan — accept, remove, reorder | ⏳ next |
-| Per-stop voting + AI alternatives to swap in | ⏳ next |
+| Curate — vote 👍/👎, remove + undo, reorder, add, edit stops | ✅ |
+| **Replace a stop** with an AI alternative in the same slot | ✅ |
+| **Ask about a place** — focused, grounded Q&A inside the stop | ✅ |
 | Exact dates at lock-in, expenses, packing, docs locker | ⏳ later |
 
 ---

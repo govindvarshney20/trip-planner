@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { googleImagesUrl, googleMapsUrl } from '@/lib/itinerary';
 import { postJson } from '@/lib/fetch-json';
-import type { Citation, StopDetail, StopWithVotes } from '@/lib/types';
+import type { Citation, StopAlternative, StopDetail, StopWithVotes } from '@/lib/types';
 import { Badge, Button, Input, Spinner } from './ui';
 
 /**
@@ -68,6 +68,60 @@ export function StopSheet({
       onClose();
     } finally {
       setBusy(false);
+    }
+  }
+
+  // Alternatives ("replace this")
+  const [alts, setAlts] = useState<StopAlternative[] | null>(null);
+  const [altBusy, setAltBusy] = useState(false);
+
+  async function loadAlts() {
+    setAltBusy(true);
+    setError(null);
+    try {
+      const body = await postJson<{ alternatives: StopAlternative[] }>(`${base}/alternatives`);
+      setAlts(body.alternatives);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setAltBusy(false);
+    }
+  }
+
+  async function replaceWith(alternativeId: string) {
+    setBusy(true);
+    try {
+      await postJson(`${base}/replace`, { alternativeId });
+      router.refresh();
+      onClose();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Ask about this place
+  const [askQ, setAskQ] = useState('');
+  const [askBusy, setAskBusy] = useState(false);
+  const [answer, setAnswer] = useState<{ text: string; sources: Citation[]; grounded: boolean } | null>(
+    null,
+  );
+
+  async function doAsk(e: React.FormEvent) {
+    e.preventDefault();
+    if (!askQ.trim() || askBusy) return;
+    setAskBusy(true);
+    setError(null);
+    try {
+      const body = await postJson<{ text: string; sources: Citation[]; grounded: boolean }>(
+        `${base}/ask`,
+        { question: askQ.trim() },
+      );
+      setAnswer(body);
+      setAskQ('');
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setAskBusy(false);
     }
   }
 
@@ -281,6 +335,100 @@ export function StopSheet({
                 </div>
               )}
             </>
+          )}
+
+          {/* Ask about this place */}
+          {!editing && (
+            <div className="border-t border-ink-800 pt-4">
+              <h3 className="mb-2 text-xs uppercase tracking-wide text-ink-500">
+                Ask about this place
+              </h3>
+              {answer && (
+                <div className="mb-3 rounded-lg bg-ink-850 p-3">
+                  <div className="mb-1 flex items-center gap-2">
+                    <span className="text-xs text-ink-500">Wayfare</span>
+                    {!answer.grounded && <Badge tone="warn">unverified</Badge>}
+                  </div>
+                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink-200">
+                    {answer.text}
+                  </p>
+                </div>
+              )}
+              <form onSubmit={doAsk} className="flex gap-2">
+                <Input
+                  value={askQ}
+                  onChange={(e) => setAskQ(e.target.value)}
+                  placeholder="Worth it with kids? Crowds in October?"
+                  disabled={askBusy}
+                  maxLength={500}
+                />
+                <Button type="submit" size="sm" disabled={askBusy || !askQ.trim()}>
+                  {askBusy ? <Spinner /> : 'Ask'}
+                </Button>
+              </form>
+            </div>
+          )}
+
+          {/* Replace with an alternative */}
+          {!editing && (
+            <div className="border-t border-ink-800 pt-4">
+              <h3 className="mb-2 text-xs uppercase tracking-wide text-ink-500">
+                Not sold on this one?
+              </h3>
+
+              {alts === null ? (
+                <Button variant="outline" size="sm" onClick={loadAlts} disabled={altBusy}>
+                  {altBusy && <Spinner />}
+                  {altBusy ? 'Finding options…' : 'Show me alternatives'}
+                </Button>
+              ) : alts.length === 0 ? (
+                <p className="text-sm text-ink-400">
+                  Couldn’t find good alternatives right now.{' '}
+                  <button onClick={loadAlts} className="text-glow hover:underline">
+                    Try again
+                  </button>
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {alts.map((a) => (
+                    <div key={a.id} className="rounded-lg border border-ink-800 p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-ink-100">{a.title}</p>
+                          {a.summary && (
+                            <p className="mt-0.5 text-sm leading-relaxed text-ink-400">
+                              {a.summary}
+                            </p>
+                          )}
+                          {a.why && (
+                            <p className="mt-1 text-xs text-ink-500">{a.why}</p>
+                          )}
+                          <p className="mt-1 flex gap-x-2 text-xs text-ink-500">
+                            {a.duration_hours && <span>{a.duration_hours}h</span>}
+                            {a.cost_note && <span>{a.cost_note}</span>}
+                          </p>
+                        </div>
+                        <Button
+                          size="sm"
+                          onClick={() => replaceWith(a.id)}
+                          disabled={busy}
+                          className="shrink-0"
+                        >
+                          Use this
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                  <button
+                    onClick={loadAlts}
+                    disabled={altBusy}
+                    className="text-xs text-ink-500 hover:text-glow"
+                  >
+                    {altBusy ? 'Re-rolling…' : '↻ Show different options'}
+                  </button>
+                </div>
+              )}
+            </div>
           )}
 
           {/* We don't host images -- Google always has coverage, costs nothing,

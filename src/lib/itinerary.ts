@@ -1,9 +1,4 @@
-import {
-  askGrounded,
-  generateStructured,
-  researchThenStructure,
-  type Researched,
-} from './gemini';
+import { generateStructured, researchThenStructure, type Researched } from './gemini';
 import { dnaToPrompt, type GroupDna } from './dna';
 import { formatMonth, tripDays } from './trip-copy';
 import type { Trip } from './types';
@@ -11,14 +6,14 @@ import type { Trip } from './types';
 /**
  * Itinerary generation and per-stop deep detail.
  *
- * Split deliberately into two very different jobs:
+ * Generation is spread across requests so no single one can time out:
  *
- *   generateItinerary  — ONE call, the whole plan skeleton. This is what the
- *                        user waits for, so it must stay a single round trip.
- *   fetchStopDetail    — one call per stop, only when someone opens it, cached
- *                        in Postgres afterwards. Generating detail for ~30
- *                        stops upfront would be minutes of waiting for
- *                        information most people never read.
+ *   generateSkeleton  — fast, ungrounded: which town anchors each day. Returned
+ *                       by /plan/generate so the day cards show at once.
+ *   generateDayStops  — grounded, one day per request from the browser. Days
+ *                       stream in.
+ *   fetchStopDetail   — one call per stop, only when someone opens it, cached
+ *                       in Postgres afterwards.
  */
 
 const SYSTEM = `You are Wayfare's trip architect. You design realistic,
@@ -156,153 +151,108 @@ function tripFacts(trip: Trip, dna: GroupDna | null): string {
   return lines.filter((l) => l !== null).join('\n');
 }
 
-/** Days that are usable: right index, and at least one real stop. */
-export function usableDays(days: GeneratedDay[], dayCount: number): GeneratedDay[] {
-  return days
-    .filter((d) => Number.isInteger(d.day_index) && d.day_index >= 0 && d.day_index < dayCount)
-    // The model occasionally repeats a day_index; the primary key would reject
-    // the whole batch, so keep the first occurrence.
-    .filter((d, i, arr) => arr.findIndex((x) => x.day_index === d.day_index) === i)
-    .filter((d) => (d.stops?.length ?? 0) > 0)
-    .sort((a, b) => a.day_index - b.day_index);
-}
-
-/** Run tasks with a concurrency cap, preserving input order in the results. */
-async function mapPool<T, R>(
-  items: T[],
-  limit: number,
-  fn: (item: T, index: number) => Promise<R>,
-): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let cursor = 0;
-  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (cursor < items.length) {
-      const i = cursor++;
-      results[i] = await fn(items[i], i);
-    }
-  });
-  await Promise.all(workers);
-  return results;
-}
+/**
+ * The itinerary is built across SEPARATE HTTP requests, not one.
+ *
+ * Doing research + skeleton + every day inside a single request meant the whole
+ * chain had to finish within one 60s serverless invocation, and the grounded
+ * research call alone could eat most of that. Splitting the calls up inside one
+ * request did not help: the total was still one request against one 60s budget.
+ *
+ * So generation is now:
+ *   generateSkeleton   — one FAST ungrounded call. Which town anchors each day.
+ *                        Returned by /plan/generate; the day cards show at once.
+ *   generateDayStops   — one grounded call PER DAY, each its own request from the
+ *                        browser with its own 60s budget. Days stream in.
+ *
+ * No request does more than one day of grounded work, so none can time out. And
+ * a per-day search ("best things to do in Ha Giang") grounds better than one
+ * giant search for the whole trip.
+ */
 
 /**
- * At most this many per-day calls run at once. High enough that a 9-day trip
- * finishes in two waves, low enough not to trip the API's per-minute limit.
+ * The day-level frame. Ungrounded on purpose: a model knows the geography of a
+ * region well enough to say "days 3-5 are the Ha Giang loop" without a search,
+ * and skipping the grounded call is what keeps this well under the limit.
  */
-const DAY_CONCURRENCY = 5;
-
-/**
- * Generate the itinerary as a skeleton plus one call per day.
- *
- * Stage 1: one grounded research call, reused everywhere.
- * Stage 2: one ungrounded call to lay out which town sits on which day.
- * Stage 3: one small ungrounded call PER DAY for that day's stops, run in
- *          parallel with a concurrency cap.
- *
- * No single call is big or slow enough to approach the 60s function limit, and
- * a day that comes back empty is retried on its own rather than sinking the
- * whole plan. The return shape is unchanged, so the route and UI are untouched.
- */
-export async function generateItinerary(
+export async function generateSkeleton(
   trip: Trip,
   dna: GroupDna | null,
-  opts: { deadline?: number } = {},
-): Promise<Researched<{ days: GeneratedDay[] }>> {
+): Promise<GeneratedDay[]> {
   const dayCount = tripDays(trip) ?? 7;
   const facts = tripFacts(trip, dna);
 
-  const researchPrompt = `Research what is needed to build the best possible
-${dayCount}-day itinerary for these travellers.
-
-${facts}
-
-Find out:
-- the genuinely worthwhile places here, and how long each actually needs
-- real travel times between them, by the transport people actually use
-- conditions in this month: weather, seasonal access, closures, festivals
-- what things cost per person
-- what visitors commonly rush or overdo, and what gets unfairly skipped
-- where two places are far enough apart that combining them eats a day
-
-Name specific places. Be concrete about hours.`;
-
-  // Stage 1: the one expensive grounded call. Its notes seed every later call.
-  const research = await askGrounded(researchPrompt, SYSTEM);
-  const notes = `\n\n--- RESEARCH NOTES ---\n${research.text}`;
-
-  // Stage 2: the frame. Which town anchors each day, in what order. No stops
-  // yet, so the output is small and the call is quick.
   const skeleton = await generateStructured<{ days: GeneratedDay[] }>(
-    `Using the research notes, lay out the shape of the best ${dayCount}-day
-itinerary for this group.
+    `Lay out the shape of the best ${dayCount}-day itinerary for this group.
 
 ${facts}
 
 Give exactly ${dayCount} days, day_index 0 to ${dayCount - 1}, in order. For each
-day: a title, the locality it is based in, a one or two sentence summary of the
-day, and a warning on any day that is tight, weather-dependent, or has a long
-transfer. Group the trip geographically so days flow sensibly and nobody
-back-tracks. Do not list individual stops yet.${notes}`,
+day: a title, the locality it is based in, a one or two sentence summary, and a
+warning on any day that is tight, weather-dependent, or has a long transfer.
+Group the trip geographically so days flow sensibly and nobody back-tracks.
+Do not list individual stops -- just the shape of each day.`,
     SKELETON_SCHEMA,
     SYSTEM,
   );
 
-  // Normalise the frame: valid indices, de-duped, gaps filled so every slot 0..n
-  // has a day even if the model skipped one.
+  // Fill every slot 0..n-1 so a day is never missing, even if the model skips
+  // one or repeats an index.
   const frame: GeneratedDay[] = [];
   for (let i = 0; i < dayCount; i++) {
     const found = (skeleton.days ?? []).find((d) => d.day_index === i);
     frame.push(found ?? { day_index: i, title: `Day ${i + 1}`, summary: '' });
   }
+  return frame;
+}
 
-  // Stage 3: fill each day's stops in parallel.
+/**
+ * One day's stops, grounded. Its own request, so it has a full 60s budget for a
+ * single day -- far more than it needs.
+ */
+export async function generateDayStops(
+  trip: Trip,
+  dna: GroupDna | null,
+  day: { day_index: number; title: string; locality: string | null; summary: string | null },
+): Promise<Researched<GeneratedStop[]>> {
+  const dayCount = tripDays(trip) ?? 7;
+  const facts = tripFacts(trip, dna);
+  const where = day.locality || trip.destination;
+  const month = formatMonth(trip.travel_month);
   const dietary = dna?.dietary?.length
     ? `\nHard dietary constraints to honour: ${dna.dietary.join(', ')}.`
     : '';
 
-  const filled = await mapPool(frame, DAY_CONCURRENCY, async (day) => {
-    const dayStops = async (extra = '') => {
-      const res = await generateStructured<{ stops: GeneratedStop[] }>(
-        `Plan day ${day.day_index + 1} of a ${dayCount}-day trip to ${trip.destination}.
+  const researchPrompt = `Research the best things to actually do on this day of
+a trip.
 
-This day: ${day.title}${day.locality ? ` (based in ${day.locality})` : ''}.
-${day.summary}
+Day ${day.day_index + 1} of ${dayCount}: ${day.title}, based around ${where}.
+${day.summary ?? ''}
 
-Trip context:
 ${facts}${dietary}
 
-Give 3 to 5 stops for THIS day only, in the order they happen. Each stop needs:
-- a specific, named place (not "a local restaurant")
-- kind: activity, meal, travel, stay or rest
-- a two or three sentence summary of what you actually do there
-- why_included: one sentence tying it to what this group wants
-- a realistic duration_hours and a per-person cost_note where you can
-Include travel legs as stops with kind "travel" and their real duration.${extra}${notes}`,
-        DAY_STOPS_SCHEMA,
-        SYSTEM,
-      );
-      return res.stops ?? [];
-    };
+Find specific, named places for this day and ${where}: what is genuinely worth
+doing, real visitor ratings, cost per person, how long each takes, and the best
+time of day${month ? ` in ${month}` : ''}. Include how to travel between them.
+Name real places, not categories.`;
 
-    let stops = await dayStops();
+  const structurePrompt = `From the research notes, give 3 to 5 stops for THIS
+day only (${day.title}, ${where}), in the order they happen.
 
-    // A single empty day is cheap to redo on its own, and there is usually time
-    // because the other days are running in parallel.
-    if (stops.length === 0) {
-      const timeLeft = opts.deadline ? opts.deadline - Date.now() : Infinity;
-      if (timeLeft > 12_000) {
-        stops = await dayStops('\nYour previous attempt returned no stops. Return 3 to 5.');
-      }
-    }
+Each stop needs a specific named place, a kind (activity, meal, travel, stay or
+rest), a two or three sentence summary of what you actually do there,
+why_included tying it to what this group wants, a realistic duration_hours, and
+a per-person cost_note where the notes support one. Include travel legs as stops
+with kind "travel" and their real duration. Do not invent ratings or prices.`;
 
-    return { ...day, stops };
-  });
+  const res = await researchThenStructure<{ stops: GeneratedStop[] }>(
+    researchPrompt,
+    structurePrompt,
+    DAY_STOPS_SCHEMA,
+    SYSTEM,
+  );
 
-  return {
-    data: { days: filled },
-    sources: research.sources,
-    grounded: research.grounded,
-  };
+  return { data: res.data.stops ?? [], sources: res.sources, grounded: res.grounded };
 }
 
 /* -------------------------------------------------------------------------

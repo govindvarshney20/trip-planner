@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { db } from './supabase';
 import { normalizeJoinCode } from './codes';
 import { computeGroupDna, type GroupDna } from './dna';
+import { sanitizeStopDetail } from './itinerary';
 import type {
   ItineraryDay,
   Member,
@@ -128,8 +129,12 @@ export async function loadItinerary(
   if (stopsRes.error) throw new DatabaseError(stopsRes.error.message);
 
   const days = (daysRes.data ?? []) as TripDay[];
-  const stops = (stopsRes.data ?? []) as PlanStop[];
   const votes = (votesRes.data ?? []) as StopVote[];
+  // Clean cached detail on read so pre-guard garbage never reaches the props
+  // the stop sheet renders from.
+  const stops = ((stopsRes.data ?? []) as PlanStop[]).map((s) =>
+    s.detail ? { ...s, detail: sanitizeStopDetail(s.detail) } : s,
+  );
 
   return days.map((day) => {
     const dayStops: StopWithVotes[] = stops

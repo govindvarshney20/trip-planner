@@ -136,6 +136,36 @@ export function PlanPanel({
     });
   }, [days, filling, attempted, code, router]);
 
+  // Warm the per-stop detail cache when a day is opened, so tapping a stop is
+  // near-instant instead of a ~15s live lookup. Fire-and-forget, low
+  // concurrency; each place is researched once ever and cached server-side, so
+  // the on-tap fetch then returns immediately.
+  useEffect(() => {
+    if (openDay === null) return;
+    const day = days.find((d) => d.day_index === openDay);
+    if (!day) return;
+    const targets = day.stops.filter((s) => !s.detail).slice(0, 4);
+    if (targets.length === 0) return;
+
+    let cancelled = false;
+    const queue = [...targets];
+    const worker = async () => {
+      while (!cancelled && queue.length) {
+        const s = queue.shift();
+        if (!s) return;
+        try {
+          await postJson(`/api/trips/${encodeURIComponent(code)}/plan/stops/${s.id}/detail`);
+        } catch {
+          // Best-effort warming; a real failure surfaces when the user taps.
+        }
+      }
+    };
+    void Promise.all([worker(), worker()]);
+    return () => {
+      cancelled = true;
+    };
+  }, [openDay, days, code]);
+
   async function retryDay(idx: number) {
     setAttempted((prev) => {
       const next = new Set(prev);

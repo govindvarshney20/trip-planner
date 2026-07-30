@@ -1,6 +1,7 @@
 import { generateStructured, researchThenStructure, type Researched } from './gemini';
 import { dnaToPrompt, type GroupDna } from './dna';
 import { formatMonth, tripDays } from './trip-copy';
+import { stripRepetition } from './utils';
 import type { Trip } from './types';
 
 /**
@@ -333,15 +334,46 @@ plausible guesses.`;
 "${stop.title}".
 
 Omit any field the notes do not support -- especially rating, rating_count and
-fees. For what_people_say, summarise the recurring themes in your own words.
-Never reproduce review text verbatim.`;
+fees. For what_people_say, write ONE tight paragraph (under 80 words) of the
+recurring praise and complaints in your own words. Never reproduce review text
+verbatim, and never repeat a phrase.`;
 
-  return researchThenStructure<StopDetail>(
+  const res = await researchThenStructure<StopDetail>(
     researchPrompt,
     structurePrompt,
     DETAIL_SCHEMA,
     SYSTEM,
+    // Cap output so a degenerating model is cut off rather than emitting pages.
+    { maxOutputTokens: 1200 },
   );
+
+  return { ...res, data: sanitizeStopDetail(res.data) };
+}
+
+/**
+ * Strip repetition loops and cap length on every free-text field.
+ *
+ * Applied both to freshly generated detail and to detail read from cache, so a
+ * bad entry produced before this guard existed is cleaned the next time it is
+ * opened -- no regeneration needed.
+ */
+export function sanitizeStopDetail(d: StopDetail): StopDetail {
+  return {
+    ...d,
+    what_it_is: clip(stripRepetition(d.what_it_is), 600) || undefined,
+    what_people_say: clip(stripRepetition(d.what_people_say), 600) || undefined,
+    getting_there: clip(stripRepetition(d.getting_there), 400) || undefined,
+    tips: d.tips?.map((t) => clip(stripRepetition(t), 240)).filter(Boolean),
+    watch_out_for: d.watch_out_for?.map((t) => clip(stripRepetition(t), 240)).filter(Boolean),
+  };
+}
+
+/** Hard character cap, cutting on a word boundary. */
+function clip(text: string, max: number): string {
+  if (!text || text.length <= max) return text;
+  const cut = text.slice(0, max);
+  const lastSpace = cut.lastIndexOf(' ');
+  return `${cut.slice(0, lastSpace > 0 ? lastSpace : max).replace(/[\s,;:–-]+$/, '')}…`;
 }
 
 /* -------------------------------------------------------------------------

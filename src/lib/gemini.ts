@@ -115,6 +115,7 @@ export async function generateStructured<T>(
   prompt: string,
   responseSchema: Record<string, unknown>,
   systemInstruction?: string,
+  opts: { maxOutputTokens?: number } = {},
 ): Promise<T> {
   const res = await ai().models.generateContent({
     model: MODEL,
@@ -122,6 +123,10 @@ export async function generateStructured<T>(
     config: {
       responseMimeType: 'application/json',
       responseSchema,
+      // A hard ceiling so a model that degenerates into repeating a phrase
+      // ("paved over recently, paved over recently, …") is cut off in tokens
+      // rather than filling the field with pages of it.
+      ...(opts.maxOutputTokens ? { maxOutputTokens: opts.maxOutputTokens } : {}),
       ...(systemInstruction ? { systemInstruction } : {}),
     },
   });
@@ -158,6 +163,7 @@ export async function researchThenStructure<T>(
   structurePrompt: string,
   responseSchema: Record<string, unknown>,
   systemInstruction?: string,
+  opts: { maxOutputTokens?: number } = {},
 ): Promise<Researched<T>> {
   const research = await askGrounded(researchPrompt, systemInstruction);
 
@@ -165,6 +171,7 @@ export async function researchThenStructure<T>(
     `${structurePrompt}\n\n--- RESEARCH NOTES ---\n${research.text}`,
     responseSchema,
     systemInstruction,
+    opts,
   );
 
   return { data, sources: research.sources, grounded: research.grounded };

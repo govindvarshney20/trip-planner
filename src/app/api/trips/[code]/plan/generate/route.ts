@@ -1,26 +1,24 @@
 import { db } from '@/lib/supabase';
 import { fail, guard, loadDna, loadTrip, ok } from '@/lib/api';
 import { requireMember } from '@/lib/session';
-import { generateItinerary, usableDays } from '@/lib/itinerary';
-import { tripDays } from '@/lib/trip-copy';
+import { generateSkeleton } from '@/lib/itinerary';
 
 export const maxDuration = 60;
 
 /**
- * A claim older than this is assumed dead and may be taken over.
- *
- * Kept just above maxDuration: when the function is killed by the platform the
- * catch block never runs, so the trip is left in 'generating' and only a stale
- * takeover can recover it. Three minutes of staring at a spinner was too long.
+ * A claim older than this is assumed dead and may be taken over. Kept just above
+ * maxDuration: if the platform kills the function the catch never runs, so only
+ * a stale takeover can recover the trip.
  */
 const STALE_CLAIM_MS = 75_000;
 
-/** Leave headroom before the platform kills us, so we fail our own way. */
-const SELF_DEADLINE_MS = 52_000;
-
+/**
+ * Builds the day-level frame only -- fast, ungrounded -- and marks the trip
+ * ready. The per-day stops are filled by separate requests
+ * (/plan/days/[dayIndex]/stops) that the browser fires once the frame is up.
+ * This is what keeps any single request well inside the 60s limit.
+ */
 export async function POST(req: Request, ctx: { params: Promise<{ code: string }> }) {
-  const deadline = Date.now() + SELF_DEADLINE_MS;
-
   return guard(async () => {
     const { code } = await ctx.params;
     const trip = await loadTrip(code);
@@ -31,9 +29,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ code: string }
     const body = (await req.json().catch(() => ({}))) as { force?: boolean };
 
     if (body.force) {
-      // Rebuild from scratch. Needed to recover a trip whose plan generated
-      // badly, and to let a group start over deliberately. Cascades clear the
-      // stops, their votes and alternatives.
+      // Rebuild from scratch: clear days and stops (cascades take votes and
+      // alternatives). Needed to recover a bad plan or start over.
       const { error: delDays } = await db().from('trip_days').delete().eq('trip_id', trip.id);
       if (delDays) throw new Error(delDays.message);
       const { error: delStops } = await db().from('plan_stops').delete().eq('trip_id', trip.id);
@@ -46,8 +43,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ code: string }
       return ok({ state: 'ready', message: 'Plan already exists' });
     }
 
-    // Atomically claim the work: generation takes ~30s and several members may
-    // open the tab at once. Whoever's UPDATE returns a row owns the job.
+    // Atomically claim the work so concurrent openers produce one skeleton.
     const staleBefore = new Date(Date.now() - STALE_CLAIM_MS).toISOString();
     const { data: claimed, error: claimErr } = await db()
       .from('trips')
@@ -68,24 +64,12 @@ export async function POST(req: Request, ctx: { params: Promise<{ code: string }
       // Preferences are additive -- the first plan is built before anyone has
       // filled them in and must be good without them.
       const dna = await loadDna(trip.id);
-      const result = await generateItinerary(trip, dna.respondents > 0 ? dna : null, {
-        deadline,
-      });
+      const frame = await generateSkeleton(trip, dna.respondents > 0 ? dna : null);
 
-      const expected = tripDays(trip) ?? 7;
-      // usableDays drops malformed indices, de-duplicates, and — critically —
-      // discards days with no stops.
-      const days = usableDays(result.data.days ?? [], expected);
-
-      // A plan without stops is a table of contents, not an itinerary. Marking
-      // that 'ready' is what put "9 days · 0 stops" in front of a user, so this
-      // fails loudly instead and the UI offers a retry.
-      if (days.length === 0) {
-        throw new Error('The model returned no days with any stops in them');
-      }
+      if (frame.length === 0) throw new Error('Could not lay out the days');
 
       const { error: dayErr } = await db().from('trip_days').insert(
-        days.map((d) => ({
+        frame.map((d) => ({
           trip_id: trip.id,
           day_index: d.day_index,
           title: d.title,
@@ -96,42 +80,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ code: string }
       );
       if (dayErr) throw new Error(dayErr.message);
 
-      const stops = days.flatMap((d) =>
-        (d.stops ?? []).map((s, i) => ({
-          trip_id: trip.id,
-          day_index: d.day_index,
-          // Spaced so a later reorder can slot between two stops without
-          // rewriting the whole day.
-          position: (i + 1) * 100,
-          title: s.title,
-          kind: s.kind ?? 'activity',
-          locality: s.locality ?? d.locality ?? null,
-          summary: s.summary ?? null,
-          why_included: s.why_included ?? null,
-          duration_hours: typeof s.duration_hours === 'number' ? s.duration_hours : null,
-          cost_note: s.cost_note ?? null,
-          best_time: s.best_time ?? null,
-        })),
-      );
-
-      // usableDays guarantees every day has stops, so an empty batch here means
-      // something upstream changed and the guarantee broke.
-      if (stops.length === 0) throw new Error('No stops to insert');
-
-      const { error: stopErr } = await db().from('plan_stops').insert(stops);
-      if (stopErr) throw new Error(stopErr.message);
-
       await db().from('trips').update({ plans_state: 'ready' }).eq('id', trip.id);
 
-      return ok({
-        state: 'ready',
-        days: days.length,
-        stops: stops.length,
-        grounded: result.grounded,
-      });
+      return ok({ state: 'ready', days: frame.length });
     } catch (err) {
-      // Release the claim so a retry is possible rather than wedging the trip
-      // in 'generating' forever.
+      // Release the claim so a retry is possible rather than wedging 'generating'.
       await db().from('trips').update({ plans_state: 'failed' }).eq('id', trip.id);
       throw err;
     }
